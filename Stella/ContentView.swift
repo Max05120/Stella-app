@@ -1,24 +1,21 @@
-//
-//  ContentView.swift
-//  Stella
-//
-//  Created by Harish Maheshwaran on 28/08/26.
-//
-
 import SwiftUI
 
 struct ContentView: View {
-    var body: some View {
-        VStack {
-            Image(systemName: "globe")
-                .imageScale(.large)
-                .foregroundStyle(.tint)
-            Text("Hello, world!")
-        }
-        .padding()
-    }
-}
 
-#Preview {
-    ContentView()
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
+    @State private var selectedConversationId: String?
+
+    var body: some View {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
+            ConversationListView(selectedConversationId: $selectedConversationId)
+        } detail: {
+            if let conversationId = selectedConversationId {
+                ChatView(conversationId: conversationId)
+            } else {
+                ContentUnavailableView("Select a conversation", systemImage: "bubble.left.and.bubble.right")
+            }
+        }
+        .navigationSplitViewStyle(.balanced)
+        .frame(minWidth: 700, minHeight: 600)
+    }
 }
