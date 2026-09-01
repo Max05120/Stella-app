@@ -10,6 +10,9 @@ xcuserdata/
 # Swift Package Manager
 .build/
 .swiftpm/
+*.bin
+*.safetensors
+*.npy
 
 # CocoaPods
 Pods/
@@ -22,3 +25,9 @@ Carthage/Build/
 
 # Archives
 *.xcarchive
+ggml-base.en.bin
+data/raw
+data/processed
+data/chroma_db
+data/memory.db
+backend.log
