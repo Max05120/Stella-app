@@ -139,7 +139,6 @@ struct ChatView: View {
                 toolsUsed: $0.toolsUsed
             )
         }
-        
     }
 
     private func sendMessage() {

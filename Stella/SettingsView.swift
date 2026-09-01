@@ -11,7 +11,8 @@ import SwiftUI
 struct SettingsView: View {
 
     @EnvironmentObject private var backend: BackendManager
-
+    @AppStorage("speakRepliesEnabled") private var speakRepliesEnabled = true
+    
     var body: some View {
         Form {
             Section("Backend") {
@@ -25,11 +26,14 @@ struct SettingsView: View {
                 LabeledContent("Assistant", value: "Stella")
                 LabeledContent("Version", value: "0.1")
             }
+            Section("Voice") {
+                Toggle("Speak Stella's replies", isOn: $speakRepliesEnabled)
+            }
         }
         .padding(20)
         .frame(width: 380, height: 220)
     }
-
+    
     private var statusText: String {
         switch backend.status {
         case .notStarted: return "Not started"

@@ -6,8 +6,32 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		50328765304576EE00DCCE96 /* Kokoro in Frameworks */ = {isa = PBXBuildFile; productRef = 50328764304576EE00DCCE96 /* Kokoro */; };
+		503287683045772000DCCE96 /* Kokoro in Frameworks */ = {isa = PBXBuildFile; productRef = 503287673045772000DCCE96 /* Kokoro */; };
+		50D3CFFC304378C800022D5D /* whisper.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 50D3CFFB304378C800022D5D /* whisper.xcframework */; };
+		50D3CFFD304378C800022D5D /* whisper.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 50D3CFFB304378C800022D5D /* whisper.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		50D3D000304379F900022D5D /* ggml-base.en.bin in Resources */ = {isa = PBXBuildFile; fileRef = 50D3CFFF304379F900022D5D /* ggml-base.en.bin */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		50D3CFFE304378C800022D5D /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				50D3CFFD304378C800022D5D /* whisper.xcframework in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
 		50D3CFCE3041867B00022D5D /* Stella.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Stella.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		50D3CFFB304378C800022D5D /* whisper.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = whisper.xcframework; path = "../whisper.cpp/build-apple/whisper.xcframework"; sourceTree = "<group>"; };
+		50D3CFFF304379F900022D5D /* ggml-base.en.bin */ = {isa = PBXFileReference; lastKnownFileType = archive.macbinary; path = "ggml-base.en.bin"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -36,6 +60,9 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				50D3CFFC304378C800022D5D /* whisper.xcframework in Frameworks */,
+				50328765304576EE00DCCE96 /* Kokoro in Frameworks */,
+				503287683045772000DCCE96 /* Kokoro in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -46,6 +73,7 @@
 			isa = PBXGroup;
 			children = (
 				50D3CFD03041867B00022D5D /* Stella */,
+				50D3CFFA304378C700022D5D /* Frameworks */,
 				50D3CFCF3041867B00022D5D /* Products */,
 			);
 			sourceTree = "<group>";
@@ -58,6 +86,15 @@
 			name = Products;
 			sourceTree = "<group>";
 		};
+		50D3CFFA304378C700022D5D /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				50D3CFFF304379F900022D5D /* ggml-base.en.bin */,
+				50D3CFFB304378C800022D5D /* whisper.xcframework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -68,6 +105,7 @@
 				50D3CFCA3041867B00022D5D /* Sources */,
 				50D3CFCB3041867B00022D5D /* Frameworks */,
 				50D3CFCC3041867B00022D5D /* Resources */,
+				50D3CFFE304378C800022D5D /* Embed Frameworks */,
 			);
 			buildRules = (
 			);
@@ -78,6 +116,8 @@
 			);
 			name = Stella;
 			packageProductDependencies = (
+				50328764304576EE00DCCE96 /* Kokoro */,
+				503287673045772000DCCE96 /* Kokoro */,
 			);
 			productName = Stella;
 			productReference = 50D3CFCE3041867B00022D5D /* Stella.app */;
@@ -107,6 +147,9 @@
 			);
 			mainGroup = 50D3CFC53041867B00022D5D;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				503287663045772000DCCE96 /* XCLocalSwiftPackageReference "Packages/kokoro-swift" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 50D3CFCF3041867B00022D5D /* Products */;
 			projectDirPath = "";
@@ -122,6 +165,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				50D3D000304379F900022D5D /* ggml-base.en.bin in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -270,6 +314,8 @@
 				INFOPLIST_FILE = Stella/Info.plist;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Stella needs local network access to communicate with its local AI backend.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Stella needs microphone to hear me";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Stella needs microphone to hear me";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -301,6 +347,8 @@
 				INFOPLIST_FILE = Stella/Info.plist;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Stella needs local network access to communicate with its local AI backend.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Stella needs microphone to hear me";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Stella needs microphone to hear me";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -340,6 +388,24 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		503287663045772000DCCE96 /* XCLocalSwiftPackageReference "Packages/kokoro-swift" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = "Packages/kokoro-swift";
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		50328764304576EE00DCCE96 /* Kokoro */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = Kokoro;
+		};
+		503287673045772000DCCE96 /* Kokoro */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = Kokoro;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 50D3CFC63041867B00022D5D /* Project object */;
 }

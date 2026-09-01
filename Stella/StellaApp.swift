@@ -1,13 +1,72 @@
 import SwiftUI
+import AppKit
+import Carbon.HIToolbox
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
-    let backend = BackendManager()
+@MainActor
+final class AppDelegate:
+    NSObject,
+    NSApplicationDelegate
+{
+    let backend =
+        BackendManager()
+    
+    private let stellaDesktop =
+            StellaDesktopController()
 
-    func applicationDidFinishLaunching(_ notification: Notification) {
+    private var quickAsk:
+        QuickAskPanelController!
+
+    private var voicePanel:
+        VoicePanelController!
+
+    private var hotKey:
+        GlobalHotKey?
+
+    func applicationDidFinishLaunching(
+        _ notification: Notification
+    ) {
+
         backend.start()
+        stellaDesktop.show()
+
+        quickAsk =
+            QuickAskPanelController(
+                backend: backend
+            )
+
+        voicePanel =
+            VoicePanelController(
+                backend: backend
+            )
+
+        hotKey =
+            GlobalHotKey(
+                keyCode:
+                    UInt32(kVK_Space),
+
+                modifiers:
+                    UInt32(
+                        cmdKey |
+                        shiftKey
+                    )
+            ) {
+                [weak self] in
+
+                guard let self else {
+                    return
+                }
+
+                Task { @MainActor in
+                    self.voicePanel
+                        .toggle()
+                }
+            }
     }
 
-    func applicationWillTerminate(_ notification: Notification) {
+    func applicationWillTerminate(
+        _ notification: Notification
+    ) {
+
         backend.stop()
     }
 }
@@ -28,7 +87,12 @@ struct StellaApp: App {
                 .environmentObject(appDelegate.backend)
         }
         .defaultLaunchBehavior(.suppressed)
-
+        Window(
+            "Voice Test",
+            id: "voice-test"
+        ) {
+            WhisperTestView()
+        }
         Settings {
             SettingsView()
                 .environmentObject(appDelegate.backend)
@@ -48,6 +112,9 @@ struct MenuBarView: View {
             Divider()
             Button("Open Stella") { openWindow(id: "chat") }
                 .keyboardShortcut("o", modifiers: .command)
+            Button("Voice Test") {
+                            openWindow(id: "voice-test")
+                        }
             Button("Settings...") { openSettings() }
                 .keyboardShortcut(",", modifiers: .command)
             Divider()
