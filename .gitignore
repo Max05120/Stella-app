@@ -14,6 +14,14 @@ xcuserdata/
 *.safetensors
 *.npy
 
+# Kokoro/model assets
+Kokoro-82M-Swift/
+Models/
+models/
+
+# Generated audio
+*.wav
+
 # CocoaPods
 Pods/
 
