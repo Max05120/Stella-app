@@ -7,65 +7,51 @@ final class AppDelegate:
     NSObject,
     NSApplicationDelegate
 {
+
+    // MARK: - Core services
+
     let backend =
         BackendManager()
-    
-    private let stellaDesktop =
-            StellaDesktopController()
+
+    private lazy var voiceManager =
+        VoiceConversationManager(
+            backend: backend
+        )
+
+    private lazy var stellaDesktop =
+        StellaDesktopController(
+            voiceManager: voiceManager
+        )
 
     private var quickAsk:
         QuickAskPanelController!
 
-    private var voicePanel:
-        VoicePanelController!
 
-    private var hotKey:
-        GlobalHotKey?
+    // MARK: - App lifecycle
 
     func applicationDidFinishLaunching(
         _ notification: Notification
     ) {
 
         backend.start()
-        stellaDesktop.show()
 
         quickAsk =
             QuickAskPanelController(
                 backend: backend
             )
 
-        voicePanel =
-            VoicePanelController(
-                backend: backend
-            )
-
-        hotKey =
-            GlobalHotKey(
-                keyCode:
-                    UInt32(kVK_Space),
-
-                modifiers:
-                    UInt32(
-                        cmdKey |
-                        shiftKey
-                    )
-            ) {
-                [weak self] in
-
-                guard let self else {
-                    return
-                }
-
-                Task { @MainActor in
-                    self.voicePanel
-                        .toggle()
-                }
-            }
+        // StellaDesktopView now owns the
+        // wake-word / voice interaction surface.
+        stellaDesktop.show()
     }
+
 
     func applicationWillTerminate(
         _ notification: Notification
     ) {
+
+        voiceManager
+            .stopConversation()
 
         backend.stop()
     }
@@ -87,12 +73,12 @@ struct StellaApp: App {
                 .environmentObject(appDelegate.backend)
         }
         .defaultLaunchBehavior(.suppressed)
-        Window(
-            "Voice Test",
-            id: "voice-test"
-        ) {
-            WhisperTestView()
-        }
+//        Window(
+//            "Voice Test",
+//            id: "voice-test"
+//        ) {
+//            WhisperTestView()
+//        }
         Settings {
             SettingsView()
                 .environmentObject(appDelegate.backend)
@@ -112,16 +98,16 @@ struct MenuBarView: View {
             Divider()
             Button("Open Stella") { openWindow(id: "chat") }
                 .keyboardShortcut("o", modifiers: .command)
-            Button("Voice Test") {
-                            openWindow(id: "voice-test")
-                        }
+//            Button("Voice Test") {
+//                            openWindow(id: "voice-test")
+//                        }
             Button("Settings...") { openSettings() }
                 .keyboardShortcut(",", modifiers: .command)
             Divider()
             Button("Quit Stella") { NSApplication.shared.terminate(nil) }
                 .keyboardShortcut("q", modifiers: .command)
         }
-        .padding()
+//        .padding()
         .frame(width: 220)
     }
 }

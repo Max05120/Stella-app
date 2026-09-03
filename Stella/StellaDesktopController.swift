@@ -14,11 +14,18 @@ final class StellaDesktopController {
 
     private var panel: StellaPanel?
     private let mouseTracker = GlobalMouseTracker()
+    private let voiceManager: VoiceConversationManager
+    
+    init(
+            voiceManager: VoiceConversationManager
+        ) {
+            self.voiceManager = voiceManager
+        }
 
     func show() {
         guard panel == nil else { return }
 
-        let size = NSSize(width: 180, height: 180)
+        let size = NSSize(width: 320, height: 320)
 
         let visibleFrame = NSScreen.main?.visibleFrame
             ?? NSRect(x: 0, y: 0, width: 1200, height: 800)
@@ -38,6 +45,17 @@ final class StellaDesktopController {
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = false
+        panel.ignoresMouseEvents = true
+        panel.contentView = NSHostingView(
+            rootView: StellaDesktopView(
+                mouseTracker: mouseTracker,
+                voiceManager: voiceManager
+            )
+        )
+
+        panel.contentView?.wantsLayer = true
+        panel.contentView?.layer?.backgroundColor =
+            NSColor.clear.cgColor
 
         panel.level = .floating
 
@@ -53,7 +71,8 @@ final class StellaDesktopController {
         
         panel.contentView = NSHostingView(
             rootView: StellaDesktopView(
-                mouseTracker: mouseTracker
+                mouseTracker: mouseTracker,
+                voiceManager: voiceManager
             )
         )
 
@@ -66,6 +85,7 @@ final class StellaDesktopController {
         mouseTracker.stop()
         panel?.orderOut(nil)
     }
+    
 }
 
 

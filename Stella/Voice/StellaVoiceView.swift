@@ -14,6 +14,9 @@ struct StellaVoiceView: View {
     @ObservedObject
     var manager:
         VoiceConversationManager
+    
+    @StateObject private var wakeWordListener =
+        WakeWordListener()
 
     var onDismiss:
         () -> Void
@@ -44,6 +47,7 @@ struct StellaVoiceView: View {
                 Spacer()
 
                 Button {
+                    wakeWordListener.stop()
                     manager
                         .stopConversation()
 
@@ -104,12 +108,62 @@ struct StellaVoiceView: View {
                 style: .continuous
             )
         )
-        .onAppear {
-            manager
-                .beginConversation()
+        .task {
+
+            // MARK: Wake → Conversation
+
+            wakeWordListener.onWakeWordDetected = {
+
+                print(
+                    "[WAKE] handing microphone to conversation"
+                )
+
+                Task { @MainActor in
+
+                    try? await Task.sleep(
+                        for: .milliseconds(300)
+                    )
+
+                    manager.beginConversation()
+                }
+            }
+
+
+            // MARK: Conversation → Wake
+
+            manager.onVoiceSessionEnded = {
+
+                print(
+                    "[VOICE] handing microphone back to wake listener"
+                )
+
+                Task { @MainActor in
+
+                    try? await Task.sleep(
+                        for: .milliseconds(300)
+                    )
+
+                    wakeWordListener.start()
+                }
+            }
+
+
+            // MARK: Initial wake listener
+
+            let allowed =
+                await wakeWordListener
+                    .requestPermissions()
+
+            guard allowed else {
+                return
+            }
+
+            wakeWordListener.start()
         }
         .onExitCommand {
-
+            
+            wakeWordListener.stop()
+            
             manager
                 .stopConversation()
 

@@ -44,6 +44,15 @@ private final class LockedSampleBuffer: @unchecked Sendable {
 
         return copy
     }
+    
+    func count() -> Int {
+
+        lock.lock()
+        let count = samples.count
+        lock.unlock()
+
+        return count
+    }
 }
 
 
@@ -146,6 +155,11 @@ final class MicrophoneRecorder: ObservableObject {
 
         print("[MIC] recording started")
     }
+    
+    var sampleCount: Int {
+        sampleBuffer.count()
+    }
+    
     func spectrumSnapshot()
         -> AudioSpectrum
     {
@@ -209,6 +223,7 @@ final class MicrophoneRecorder: ObservableObject {
 
         var suppliedInput = false
         var conversionError: NSError?
+        
 
         let status = converter.convert(
             to: convertedBuffer,
@@ -261,6 +276,7 @@ final class MicrophoneRecorder: ObservableObject {
         )
 
         var squareSum: Float = 0
+        
 
         for sample in samples {
             squareSum += sample * sample
