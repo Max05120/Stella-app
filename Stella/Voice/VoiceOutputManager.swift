@@ -13,8 +13,11 @@ final class VoiceOutputManager:
     var spectrum:
         AudioSpectrum = .zero
 
-    private let kokoro =
-        KokoroTTSEngine()
+    private let kokoro: KokoroTTSEngine
+    
+    init(sharedEngine: AVAudioEngine) {
+        kokoro = KokoroTTSEngine(sharedEngine: sharedEngine)
+    }
 
     private let avSpeech =
         AVSpeechTTSEngine()

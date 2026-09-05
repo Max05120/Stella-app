@@ -69,9 +69,7 @@ actor WhisperTranscriber {
             return ""
         }
         
-        var params = whisper_full_default_params(
-            WHISPER_SAMPLING_BEAM_SEARCH
-        )
+        var params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY)
         
         // MARK: - Output
         
@@ -99,8 +97,9 @@ actor WhisperTranscriber {
         
         // Beam search is slower than greedy but generally
         // better for short ambiguous conversational phrases.
-        params.beam_search.beam_size = 5
-        params.beam_search.patience = 1.0
+//        params.beam_search.beam_size = 8
+//        params.beam_search.patience = 1.2
+        params.greedy.best_of = 1
         
         // Deterministic initial decoding.
         params.temperature = 0.0
@@ -124,12 +123,47 @@ actor WhisperTranscriber {
         
         let prompt =
             """
-            Stella is a personal desktop AI assistant running on macOS.
-            The user is speaking conversational English to Stella.
-            Common terms include Stella, macOS, Whisper, Ollama, SwiftUI,
-            calendar, weather, reminder, music, application, window,
-            microphone, backend, voice, listening, thinking, speaking,
-            go idle, stop listening, we're done Stella, and hey Stella.
+            Stella is a macOS desktop voice assistant.
+
+            The user may speak short commands to control their Mac.
+
+            Common command phrases include:
+            open Spotify,
+            open Safari,
+            open Finder,
+            open Terminal,
+            open Xcode,
+            open Music,
+            open Notes,
+            open Calendar,
+            open Messages,
+            open Mail,
+            open Discord,
+            open Visual Studio Code,
+            open System Settings,
+            open Downloads,
+            open Desktop,
+            open Documents,
+            open Applications,
+            launch Spotify,
+            launch Safari,
+            launch Xcode,
+            show Downloads,
+            show Desktop,
+            go idle,
+            Hey Stella,
+            reveal file in Finder.
+
+            Common command words:
+            open, launch, start, show, reveal, create, make,
+            move, copy, duplicate, rename, delete, remove, trash.
+
+            Important names and terms:
+            Stella, Spotify, Safari, Finder, Terminal, Xcode,
+            SwiftUI, macOS, Ollama, Whisper, Downloads,
+            Desktop, Documents, Applications.
+
+            The user may also speak normal conversational English.
             """
         
         let result: Int32 =
@@ -171,28 +205,19 @@ actor WhisperTranscriber {
         
         // MARK: - Result
         
-        let segmentCount =
-        whisper_full_n_segments(
-            context
-        )
-        
+        let segmentCount = whisper_full_n_segments(context)
         var transcript = ""
-        
+        var maxNoSpeechProb: Float = 0
+
         for index in 0..<segmentCount {
-            
-            guard let text =
-                    whisper_full_get_segment_text(
-                        context,
-                        index
-                    )
-            else {
-                continue
-            }
-            
-            transcript +=
-            String(
-                cString: text
-            )
+            maxNoSpeechProb = max(maxNoSpeechProb, whisper_full_get_segment_no_speech_prob(context, index))
+            guard let text = whisper_full_get_segment_text(context, index) else { continue }
+            transcript += String(cString: text)
+        }
+
+        guard maxNoSpeechProb < 0.5 else {
+            print("[WHISPER] rejected, no_speech_prob=\(maxNoSpeechProb)")
+            return ""
         }
         
         let elapsed =

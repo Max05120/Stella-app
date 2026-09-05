@@ -18,7 +18,7 @@ import Kokoro
 @MainActor
 final class KokoroTTSEngine {
 
-    private let audioEngine = AVAudioEngine()
+    private let sharedEngine: AVAudioEngine
     private let playerNode = AVAudioPlayerNode()
     private let analyzer = AudioSpectrumAnalyzer()
 
@@ -36,8 +36,9 @@ final class KokoroTTSEngine {
     private let voice = "af_heart"
     private let sampleRate = 24_000
 
-    init() {
-        audioEngine.attach(playerNode)
+    init(sharedEngine: AVAudioEngine) {
+        self.sharedEngine = sharedEngine
+        sharedEngine.attach(playerNode)
     }
 
     // MARK: - Prepare
@@ -199,7 +200,7 @@ final class KokoroTTSEngine {
                     }
 
                     try self.queue(
-                        samples: result.audio,
+                        samples: Self.applyEdgeFades(result.audio),
                         sampleRate:
                             result.sampleRate
                     )
@@ -313,16 +314,12 @@ final class KokoroTTSEngine {
 
     // MARK: - Audio engine
 
-    private func configureAudioEngine()
-        throws
-    {
+    private func configureAudioEngine() throws {
         guard
             let format =
                 AVAudioFormat(
-                    commonFormat:
-                        .pcmFormatFloat32,
-                    sampleRate:
-                        Double(sampleRate),
+                    commonFormat: .pcmFormatFloat32,
+                    sampleRate: Double(sampleRate),
                     channels: 1,
                     interleaved: false
                 )
@@ -330,21 +327,16 @@ final class KokoroTTSEngine {
             return
         }
 
-        audioEngine.connect(
+        sharedEngine.connect(
             playerNode,
-            to:
-                audioEngine.mainMixerNode,
-            format:
-                format
-        )
-
-        installSpectrumTap(
+            to: sharedEngine.mainMixerNode,
             format: format
         )
 
-        audioEngine.prepare()
+        installSpectrumTap(format: format)
 
-        try audioEngine.start()
+        // No .prepare()/.start() here — MicrophoneRecorder owns
+        // starting the shared engine.
     }
 
     private func installSpectrumTap(
@@ -513,10 +505,10 @@ final class KokoroTTSEngine {
                     ?? false
 
             let targetReached =
-                current.count >= 12
+                current.count >= 24
 
             let hardLimit =
-                current.count >= 20
+                current.count >= 40
 
             if
                 (endsSentence &&
@@ -548,5 +540,17 @@ final class KokoroTTSEngine {
         }
 
         return chunks
+    }
+    
+    private static func applyEdgeFades(_ samples: [Float]) -> [Float] {
+        let crossfadeSamples = 240 // ~10ms at 24kHz
+        guard samples.count > crossfadeSamples * 2 else { return samples }
+        var out = samples
+        for i in 0..<crossfadeSamples {
+            let t = Float(i) / Float(crossfadeSamples)
+            out[i] *= t
+            out[out.count - 1 - i] *= t
+        }
+        return out
     }
 }

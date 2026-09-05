@@ -77,10 +77,17 @@ final class MicrophoneRecorder: ObservableObject {
     @Published private(set) var isRecording = false
     @Published private(set) var level: Float = 0
     
-    private let audioEngine = AVAudioEngine()
+    let engine = AVAudioEngine()
 
     private let sampleBuffer =
         LockedSampleBuffer()
+    var sampleCount: Int {
+        sampleBuffer.count()
+    }
+
+    func spectrumSnapshot() -> AudioSpectrum {
+        sampleBuffer.spectrumSnapshot()
+    }
 
     private static func makeTargetFormat()
         -> AVAudioFormat
@@ -93,6 +100,8 @@ final class MicrophoneRecorder: ObservableObject {
         )!
     }
 
+    private var engineStarted = false
+
     func start() throws {
 
         guard !isRecording else {
@@ -100,18 +109,15 @@ final class MicrophoneRecorder: ObservableObject {
         }
         sampleBuffer.clear()
 
-        let inputNode =
-            audioEngine.inputNode
+        let inputNode = engine.inputNode
 
-        let inputFormat =
-            inputNode.outputFormat(forBus: 0)
+        let inputFormat = inputNode.outputFormat(forBus: 0)
 
         guard inputFormat.sampleRate > 0 else {
             throw RecorderError.microphoneUnavailable
         }
 
-        let targetFormat =
-            Self.makeTargetFormat()
+        let targetFormat = Self.makeTargetFormat()
 
         guard let converter =
                 AVAudioConverter(
@@ -147,24 +153,20 @@ final class MicrophoneRecorder: ObservableObject {
             }
         }
 
-        audioEngine.prepare()
+        if !engineStarted {
+            // Must happen before the engine's first start, and after
+            // Kokoro has already attached its player node (see file 2) —
+            // that's the reference signal AEC subtracts from the mic.
+            try? inputNode.setVoiceProcessingEnabled(true)
 
-        try audioEngine.start()
-        
+            engine.prepare()
+            try engine.start()
+            engineStarted = true
+        }
+
         isRecording = true
 
         print("[MIC] recording started")
-    }
-    
-    var sampleCount: Int {
-        sampleBuffer.count()
-    }
-    
-    func spectrumSnapshot()
-        -> AudioSpectrum
-    {
-        sampleBuffer
-            .spectrumSnapshot()
     }
 
     func stop() -> [Float] {
@@ -173,21 +175,17 @@ final class MicrophoneRecorder: ObservableObject {
             return []
         }
 
-        audioEngine.stop()
-
-        audioEngine.inputNode.removeTap(
-            onBus: 0
-        )
+        engine.inputNode.removeTap(onBus: 0)
+        // Deliberately not calling engine.stop() — Kokoro's player node
+        // lives on this same engine now, and AEC doesn't like being
+        // torn down and rebuilt every turn.
 
         isRecording = false
         level = 0
 
-        let samples =
-            sampleBuffer.snapshot()
+        let samples = sampleBuffer.snapshot()
 
-        print(
-            "[MIC] recording stopped — \(samples.count) samples"
-        )
+        print("[MIC] recording stopped — \(samples.count) samples")
 
         return samples
     }

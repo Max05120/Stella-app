@@ -38,8 +38,7 @@ final class VoiceConversationManager:
     
     let recorder = MicrophoneRecorder()
     
-    private let output =
-    VoiceOutputManager()
+    private let output: VoiceOutputManager
     
     private let backend:
     BackendManager
@@ -61,15 +60,22 @@ final class VoiceConversationManager:
     private var spectrumTask:
     Task<Void, Never>?
     
+    var candidateSpeechStartedAt: Date?
+    
     private let conversationId =
     VoiceConversationManager
         .loadOrCreateConversationId()
     
     // Tune these later using real usage.
-    private let speechThreshold: Float = 0.012
-    
+    private let speechThreshold: Float = 0.025
+    private let speechConfirmationDuration: TimeInterval = 0.25
     private let silenceDuration:
-    TimeInterval = 1.05
+    TimeInterval = 0.7
+    
+    // Barge-in behaviour
+    private let bargeInThreshold: Float = 0.02
+    private let bargeInConfirmMs: Int = 180
+    private var bargeInTask: Task<Void, Never>?
     
     private let minimumSpeechDuration:
     TimeInterval = 0.22
@@ -96,6 +102,7 @@ final class VoiceConversationManager:
         backend: BackendManager
     ) {
         self.backend = backend
+        self.output = VoiceOutputManager(sharedEngine: recorder.engine)
         
         loadWhisper()
         Task {
@@ -225,14 +232,9 @@ final class VoiceConversationManager:
         
         startSpectrumUpdates()
         
-        output.speak(
-            "Hey, I'm listening."
-        ) { [weak self] in
-            guard let self else {
-                return
-            }
-            
-            self.startListening()
+        speak("Hey, I'm listening.", settingState: .greeting) {
+            [weak self] in
+            self?.startListening()
         }
     }
     
@@ -303,16 +305,13 @@ final class VoiceConversationManager:
             return
         }
         
-        
-        guard !recorder.isRecording else {
-            return
-        }
-        
         transcript = ""
-        
+
         do {
             
-            try recorder.start()
+            if !recorder.isRecording {
+                try recorder.start()
+            }
             
             state = .listening
             
@@ -378,23 +377,35 @@ final class VoiceConversationManager:
                 
                 let now = Date()
                 
-                if level >
-                    self.speechThreshold
-                {
-                    if !heardSpeech {
+                if level > self.speechThreshold {
+
+                    if candidateSpeechStartedAt == nil {
+                        candidateSpeechStartedAt = now
+                    }
+
+                    if !heardSpeech,
+                       let candidateStart = candidateSpeechStartedAt,
+                       now.timeIntervalSince(candidateStart) >= self.speechConfirmationDuration {
 
                         heardSpeech = true
-                        speechStartedAt = now
-
-                        speechStartSample =
-                            self.recorder.sampleCount
+                        speechStartedAt = candidateStart
+                        speechStartSample = self.recorder.sampleCount
 
                         print(
-                            "[VOICE] speech detected at sample \(speechStartSample ?? 0)"
+                            "[VOICE] confirmed speech at sample \(speechStartSample ?? 0)"
                         )
                     }
-                    
-                    lastSpeechAt = now
+
+                    if heardSpeech {
+                        lastSpeechAt = now
+                    }
+
+                } else {
+
+                    // Noise spike wasn't sustained long enough.
+                    if !heardSpeech {
+                        candidateSpeechStartedAt = nil
+                    }
                 }
                 
                 guard
@@ -507,6 +518,16 @@ final class VoiceConversationManager:
             "[VOICE] trimmed audio \(recordedSamples.count) → \(samples.count) samples"
         )
         
+        var squareSum: Float = 0
+        for s in samples { squareSum += s * s }
+        let utteranceRMS = sqrt(squareSum / Float(samples.count))
+
+        guard utteranceRMS > speechThreshold * 1.3 else {
+            print("[VOICE] discarding, too quiet: \(utteranceRMS)")
+            startListening()
+            return
+        }
+        
         state = .transcribing
         
         conversationTask = Task {
@@ -602,16 +623,8 @@ final class VoiceConversationManager:
 
         startSpectrumUpdates()
 
-        output.speak(
-            response
-        ) {
-            [weak self] in
-
-            guard let self else {
-                return
-            }
-
-            self.endVoiceSession()
+        speak(response) { [weak self] in
+            self?.endVoiceSession()
         }
     }
     // MARK: - Stella API
@@ -680,16 +693,56 @@ final class VoiceConversationManager:
         
         startSpectrumUpdates()
         
-        output.speak(
-            text
-        ) {
-            [weak self] in
-            
-            guard let self else {
-                return
+        speak(text) { [weak self] in
+            self?.startListening()
+        }
+    }
+    
+    private func speak(
+        _ text: String,
+        settingState: State = .speaking,
+        then: @escaping () -> Void
+    ) {
+        state = settingState
+        startSpectrumUpdates()
+        watchForBargeIn()
+
+        output.speak(text) { [weak self] in
+            guard let self else { return }
+            self.bargeInTask?.cancel()
+            self.bargeInTask = nil
+            then()
+        }
+    }
+
+    private func watchForBargeIn() {
+        bargeInTask?.cancel()
+
+        if !recorder.isRecording {
+            try? recorder.start()
+        }
+
+        bargeInTask = Task { [weak self] in
+            guard let self else { return }
+            var aboveCount = 0
+            let pollMs = 30
+            let neededPolls = self.bargeInConfirmMs / pollMs
+
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(pollMs))
+                guard !Task.isCancelled, self.output.isSpeaking else { return }
+
+                aboveCount = self.recorder.level > self.bargeInThreshold ? aboveCount + 1 : 0
+
+                if aboveCount >= neededPolls {
+                    print("[VOICE] barge-in detected")
+                    self.output.stop()
+                    _ = self.recorder.stop()   // discard — likely Stella's own voice
+                    self.bargeInTask = nil
+                    self.startListening()
+                    return
+                }
             }
-            
-            self.startListening()
         }
     }
     // MARK: - Local voice commands
