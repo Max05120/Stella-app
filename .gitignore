@@ -41,3 +41,4 @@ backend/data/processed/
 backend/data/chroma_db/
 backend/data/memory.db
 backend.log
+*.bin
