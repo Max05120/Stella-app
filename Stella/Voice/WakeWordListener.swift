@@ -20,7 +20,11 @@ final class WakeWordListener: ObservableObject {
     var onWakeWordDetected: (() -> Void)?
     private var hasTriggeredWake = false
 
-    private let audioEngine = AVAudioEngine()
+    private let recorder: MicrophoneRecorder
+
+    init(recorder: MicrophoneRecorder) {
+        self.recorder = recorder
+    }
 
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
@@ -101,7 +105,7 @@ final class WakeWordListener: ObservableObject {
         recognitionRequest = request
 
         let inputNode =
-            audioEngine.inputNode
+            recorder.engine.inputNode
 
         let recordingFormat =
             inputNode.outputFormat(
@@ -120,11 +124,9 @@ final class WakeWordListener: ObservableObject {
                 .append(buffer)
         }
 
-        audioEngine.prepare()
-
         do {
 
-            try audioEngine.start()
+            try recorder.ensureEngineRunning()
 
             isListening = true
 
@@ -203,11 +205,7 @@ final class WakeWordListener: ObservableObject {
         recognitionRequest?.endAudio()
         recognitionRequest = nil
 
-        if audioEngine.isRunning {
-            audioEngine.stop()
-        }
-
-        audioEngine.inputNode
+        recorder.engine.inputNode
             .removeTap(
                 onBus: 0
             )

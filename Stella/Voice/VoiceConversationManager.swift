@@ -73,9 +73,10 @@ final class VoiceConversationManager:
     TimeInterval = 0.7
     
     // Barge-in behaviour
-    private let bargeInThreshold: Float = 0.02
-    private let bargeInConfirmMs: Int = 180
+    private let bargeInThreshold: Float = 0.055
+    private let bargeInConfirmMs: Int = 250
     private var bargeInTask: Task<Void, Never>?
+    private let bargeInBleedFactor: Float = 1.6
     
     private let minimumSpeechDuration:
     TimeInterval = 0.22
@@ -95,8 +96,22 @@ final class VoiceConversationManager:
         "stop listening stella",
         "you can stop listening",
         "bye stella",
+        "bye, bye, stella",
         "goodbye stella"
     ]
+    
+    private static let hallucinationFragments: [String] = [
+        "thank you for watching",
+        "thanks for watching",
+        "please subscribe",
+        "subscribe to our channel",
+        "like and subscribe",
+        "don't forget to subscribe",
+        "see you in the next video",
+        "see you next time"
+    ]
+    
+    private var audioGraphReadyTask: Task<Void, Never>?
     
     init(
         backend: BackendManager
@@ -105,9 +120,13 @@ final class VoiceConversationManager:
         self.output = VoiceOutputManager(sharedEngine: recorder.engine)
         
         loadWhisper()
-        Task {
-            await output.prepare()
-        }
+        audioGraphReadyTask = Task {
+                await output.prepare()
+            }
+    }
+    
+    func waitUntilAudioGraphReady() async {
+        await audioGraphReadyTask?.value
     }
     
     var audioLevel: Float {
@@ -141,6 +160,7 @@ final class VoiceConversationManager:
             return message
         }
     }
+    
     
     
     // MARK: - Startup
@@ -731,11 +751,15 @@ final class VoiceConversationManager:
             while !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(pollMs))
                 guard !Task.isCancelled, self.output.isSpeaking else { return }
-
-                aboveCount = self.recorder.level > self.bargeInThreshold ? aboveCount + 1 : 0
+                
+                let playbackLevel = self.output.spectrum.level
+                let dynamicThreshold = self.bargeInThreshold + playbackLevel * self.bargeInBleedFactor
+                
+                aboveCount = self.recorder.level > dynamicThreshold ? aboveCount + 1 : 0
 
                 if aboveCount >= neededPolls {
                     print("[VOICE] barge-in detected")
+                    print("[VOICE] barge-in detected — mic \(self.recorder.level), Stella's own output \(playbackLevel)")
                     self.output.stop()
                     _ = self.recorder.stop()   // discard — likely Stella's own voice
                     self.bargeInTask = nil
@@ -777,6 +801,16 @@ final class VoiceConversationManager:
             upper.contains("[BLANK_AUDIO]") ||
             upper.contains("[BLANK AUDIO]")
         {
+            return ""
+        }
+        
+        let normalizedForHallucinationCheck = cleaned
+            .lowercased()
+            .trimmingCharacters(in: CharacterSet(charactersIn: ".!?,"))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if Self.hallucinationFragments.contains(where: { normalizedForHallucinationCheck.contains($0) }) {
+            print("[VOICE] discarding likely hallucination: \(cleaned)")
             return ""
         }
         

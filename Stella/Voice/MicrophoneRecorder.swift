@@ -101,6 +101,18 @@ final class MicrophoneRecorder: ObservableObject {
     }
 
     private var engineStarted = false
+    
+    func ensureEngineRunning() throws {
+        guard !engineStarted else {
+            return
+        }
+
+        // try? engine.inputNode.setVoiceProcessingEnabled(true)
+
+        engine.prepare()
+        try engine.start()
+        engineStarted = true
+    }
 
     func start() throws {
 
@@ -108,7 +120,9 @@ final class MicrophoneRecorder: ObservableObject {
             return
         }
         sampleBuffer.clear()
-
+        
+        try ensureEngineRunning()
+        
         let inputNode = engine.inputNode
 
         let inputFormat = inputNode.outputFormat(forBus: 0)

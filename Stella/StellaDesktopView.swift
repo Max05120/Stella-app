@@ -14,8 +14,18 @@ struct StellaDesktopView: View {
     @ObservedObject var mouseTracker: GlobalMouseTracker
     @ObservedObject var voiceManager: VoiceConversationManager
 
-    @StateObject private var wakeWordListener =
-        WakeWordListener()
+    @StateObject private var wakeWordListener: WakeWordListener
+
+        init(
+            mouseTracker: GlobalMouseTracker,
+            voiceManager: VoiceConversationManager
+        ) {
+            self.mouseTracker = mouseTracker
+            self.voiceManager = voiceManager
+            _wakeWordListener = StateObject(
+                wrappedValue: WakeWordListener(recorder: voiceManager.recorder)
+            )
+        }
     @State private var behaviorState: StellaBehaviorState = .idle
     @State private var statePulse: CGFloat = 1
 
@@ -163,11 +173,10 @@ struct StellaDesktopView: View {
             .task {
                 configureVoiceLifecycle()
 
-                let allowed =
-                    await wakeWordListener
-                        .requestPermissions()
+                async let allowed = wakeWordListener.requestPermissions()
+                await voiceManager.waitUntilAudioGraphReady()
 
-                guard allowed else {
+                guard await allowed else {
                     print(
                         "[CHARACTER] wake-word permissions unavailable"
                     )
@@ -180,6 +189,7 @@ struct StellaDesktopView: View {
 
                 wakeWordListener.start()
             }
+            
             .onChange(
                 of: voiceManager.state
             ) { newState in
