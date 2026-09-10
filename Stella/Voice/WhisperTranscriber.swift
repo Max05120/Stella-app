@@ -99,7 +99,7 @@ actor WhisperTranscriber {
         // better for short ambiguous conversational phrases.
 //        params.beam_search.beam_size = 8
 //        params.beam_search.patience = 1.2
-        params.greedy.best_of = 1
+        params.greedy.best_of = 3
         
         // Deterministic initial decoding.
         params.temperature = 0.0
@@ -123,47 +123,31 @@ actor WhisperTranscriber {
         
         let prompt =
             """
-            Stella is a macOS desktop voice assistant.
+            Stella is a macOS desktop AI assistant.
 
-            The user may speak short commands to control their Mac.
+            The user speaks conversational English and may occasionally
+            give short macOS commands.
 
-            Common command phrases include:
-            open Spotify,
-            open Safari,
-            open Finder,
-            open Terminal,
-            open Xcode,
-            open Music,
-            open Notes,
-            open Calendar,
-            open Messages,
-            open Mail,
-            open Discord,
-            open Visual Studio Code,
-            open System Settings,
-            open Downloads,
-            open Desktop,
-            open Documents,
-            open Applications,
-            launch Spotify,
-            launch Safari,
-            launch Xcode,
-            show Downloads,
-            show Desktop,
-            go idle,
-            Hey Stella,
-            reveal file in Finder.
-
-            Common command words:
-            open, launch, start, show, reveal, create, make,
-            move, copy, duplicate, rename, delete, remove, trash.
-
-            Important names and terms:
-            Stella, Spotify, Safari, Finder, Terminal, Xcode,
-            SwiftUI, macOS, Ollama, Whisper, Downloads,
-            Desktop, Documents, Applications.
-
-            The user may also speak normal conversational English.
+            Important names and technical terms:
+            Stella, 
+            macOS,
+            SwiftUI,
+            Xcode,
+            Finder,
+            Safari,
+            Spotify,
+            Ollama,
+            Whisper,
+            RAG,
+            Retrieval-Augmented Generation,
+            LLM,
+            AI,
+            machine learning,
+            embeddings,
+            vector database,
+            ChromaDB,
+            FastAPI,
+            Python.
             """
         
         let result: Int32 =

@@ -188,7 +188,26 @@ final class WakeWordListener: ObservableObject {
                             "[WAKE] recognition error: \(error.localizedDescription)"
                         )
 
+                        let shouldRecover =
+                            !self.hasTriggeredWake
+
                         self.stop()
+
+                        if shouldRecover {
+
+                            Task { @MainActor [weak self] in
+
+                                try? await Task.sleep(
+                                    for: .milliseconds(400)
+                                )
+
+                                guard let self else {
+                                    return
+                                }
+
+                                self.start()
+                            }
+                        }
                     }
                 }
             }

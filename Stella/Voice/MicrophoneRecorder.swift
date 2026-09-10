@@ -102,18 +102,83 @@ final class MicrophoneRecorder: ObservableObject {
 
     private var engineStarted = false
     
+    private var configurationObserver: NSObjectProtocol?
+
+    private var inputTapInstalled = false
+
+    var onConfigurationChanged: (() -> Void)?
+    
+    init() {
+
+        configurationObserver =
+            NotificationCenter.default.addObserver(
+                forName: .AVAudioEngineConfigurationChange,
+                object: engine,
+                queue: .main
+            ) { [weak self] _ in
+
+                Task { @MainActor [weak self] in
+                    self?.handleAudioConfigurationChange()
+                }
+            }
+    }
+    
+    private func handleAudioConfigurationChange() {
+
+        print("[MIC] audio configuration changed")
+
+        if inputTapInstalled {
+
+            engine.inputNode.removeTap(
+                onBus: 0
+            )
+
+            inputTapInstalled = false
+        }
+
+        isRecording = false
+        level = 0
+
+        sampleBuffer.clear()
+
+        // Do not trust our cached engine state after a hardware change.
+        engineStarted = engine.isRunning
+
+        onConfigurationChanged?()
+    }
+    
     func ensureEngineRunning() throws {
-        guard !engineStarted else {
+
+        if engine.isRunning {
+            engineStarted = true
             return
         }
 
-        // try? engine.inputNode.setVoiceProcessingEnabled(true)
+        let inputNode = engine.inputNode
+
+        // Voice Processing/AEC temporarily disabled.
+        // It is causing an AggregateDevice / DSP failure
+        // with the current input/output configuration.
+        if inputNode.isVoiceProcessingEnabled {
+            do {
+                try inputNode.setVoiceProcessingEnabled(false)
+                print("[MIC] voice processing disabled")
+            } catch {
+                print(
+                    "[MIC] couldn't disable voice processing:",
+                    error.localizedDescription
+                )
+            }
+        }
 
         engine.prepare()
         try engine.start()
-        engineStarted = true
-    }
 
+        engineStarted = true
+
+        print("[MIC] audio engine running")
+    }
+    
     func start() throws {
 
         guard !isRecording else {
@@ -149,7 +214,7 @@ final class MicrophoneRecorder: ObservableObject {
             bufferSize: 1024,
             format: inputFormat
         ) { [weak self] buffer, _ in
-
+            
             guard let converted = Self.convert(
                 buffer,
                 using: converter,
@@ -167,17 +232,18 @@ final class MicrophoneRecorder: ObservableObject {
             }
         }
 
-        if !engineStarted {
-            // Must happen before the engine's first start, and after
-            // Kokoro has already attached its player node (see file 2) —
-            // that's the reference signal AEC subtracts from the mic.
-            try? inputNode.setVoiceProcessingEnabled(true)
-
-            engine.prepare()
-            try engine.start()
-            engineStarted = true
-        }
-
+//        if !engineStarted {
+//            // Must happen before the engine's first start, and after
+//            // Kokoro has already attached its player node (see file 2) —
+//            // that's the reference signal AEC subtracts from the mic.
+//            try? inputNode.setVoiceProcessingEnabled(true)
+//
+//            engine.prepare()
+//            try engine.start()
+//            engineStarted = true
+//        }
+        inputTapInstalled = true
+        
         isRecording = true
 
         print("[MIC] recording started")
@@ -189,7 +255,14 @@ final class MicrophoneRecorder: ObservableObject {
             return []
         }
 
-        engine.inputNode.removeTap(onBus: 0)
+        if inputTapInstalled {
+
+            engine.inputNode.removeTap(
+                onBus: 0
+            )
+
+            inputTapInstalled = false
+        }
         // Deliberately not calling engine.stop() — Kokoro's player node
         // lives on this same engine now, and AEC doesn't like being
         // torn down and rebuilt every turn.
