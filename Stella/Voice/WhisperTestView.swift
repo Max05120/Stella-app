@@ -16,10 +16,14 @@ struct WhisperTestView: View {
 
     @State private var whisper:
         WhisperTranscriber?
+    @State private var voiceDetectionTest: VoiceDetectionSmokeTest?
+    @State private var conversationTest: StellaConversationOrchestrator?
 
     @State private var transcript = ""
 
     @State private var status = "Loading Whisper..."
+    
+    
 
     var body: some View {
 
@@ -54,7 +58,51 @@ struct WhisperTestView: View {
                         cornerRadius: 12
                     )
                 )
+//            Button("Start Turn Detection Test") {
+//
+//                let test = VoiceDetectionSmokeTest()
+//
+//                voiceDetectionTest = test
+//
+//                test.start()
+//            }
+//            
+            Button("Run State Machine Test") {
+                ConversationStateSmokeTest().run()
+            }
+//
+//            Button("Stop Turn Detection Test") {
+//
+//                voiceDetectionTest?.stop()
+//
+//                voiceDetectionTest = nil
+//            }
+            Button("Start New Conversation Test") {
 
+                let orchestrator =
+                    StellaConversationOrchestrator()
+
+                conversationTest = orchestrator
+
+                do {
+
+                    try orchestrator.startDebugConversation()
+
+                } catch {
+
+                    print(
+                        "[CONVERSATION TEST] failed:",
+                        error.localizedDescription
+                    )
+                }
+            }
+
+            Button("Stop New Conversation Test") {
+
+                conversationTest?.shutdown()
+
+                conversationTest = nil
+            }
             Button(
                 recorder.isRecording
                     ? "Stop & Transcribe"

@@ -70,15 +70,16 @@ struct StellaApp: App {
 
         Window("Stella", id: "chat") {
             ContentView()
+//            WhisperTestView()
                 .environmentObject(appDelegate.backend)
         }
         .defaultLaunchBehavior(.suppressed)
-//        Window(
-//            "Voice Test",
-//            id: "voice-test"
-//        ) {
-//            WhisperTestView()
-//        }
+        Window(
+            "Voice Test",
+            id: "voice-test"
+        ) {
+            WhisperTestView()
+        }
         Settings {
             SettingsView()
                 .environmentObject(appDelegate.backend)
@@ -98,9 +99,9 @@ struct MenuBarView: View {
             Divider()
             Button("Open Stella") { openWindow(id: "chat") }
                 .keyboardShortcut("o", modifiers: .command)
-//            Button("Voice Test") {
-//                            openWindow(id: "voice-test")
-//                        }
+            Button("Voice Test") {
+                            openWindow(id: "voice-test")
+                        }
             Button("Settings...") { openSettings() }
                 .keyboardShortcut(",", modifiers: .command)
             Divider()

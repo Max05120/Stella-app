@@ -21,6 +21,7 @@ final class KokoroTTSEngine {
     private let sharedEngine: AVAudioEngine
     private let playerNode = AVAudioPlayerNode()
     private let analyzer = AudioSpectrumAnalyzer()
+    private weak var audioPreprocessor: AudioPreprocessor?
 
     private var pipeline: KPipeline?
     private var isPrepared = false
@@ -32,12 +33,20 @@ final class KokoroTTSEngine {
 
     var onSpectrum: ((AudioSpectrum) -> Void)?
     var onFinished: (() -> Void)?
+    var onPlaybackStarted: (() -> Void)?
+
+    private var hasNotifiedPlaybackStarted = false
 
     private let voice = "af_heart"
     private let sampleRate = 24_000
 
-    init(sharedEngine: AVAudioEngine) {
+    init(
+        sharedEngine: AVAudioEngine,
+        audioPreprocessor: AudioPreprocessor? = nil
+    ) {
         self.sharedEngine = sharedEngine
+        self.audioPreprocessor = audioPreprocessor
+
         sharedEngine.attach(playerNode)
     }
 
@@ -145,6 +154,7 @@ final class KokoroTTSEngine {
         synthesisFinished = false
         pendingBuffers = 0
         analyzer?.reset()
+        hasNotifiedPlaybackStarted = false
         
         let chunks =
             Self.makeSpeechChunks(
@@ -371,6 +381,30 @@ final class KokoroTTSEngine {
                         count: count
                     )
                 )
+            
+            self?.audioPreprocessor?
+                .processRender(samples)
+            
+            Task { @MainActor [weak self] in
+
+                guard let self else {
+                    return
+                }
+
+                guard self.isSpeaking,
+                      !self.hasNotifiedPlaybackStarted
+                else {
+                    return
+                }
+
+                self.hasNotifiedPlaybackStarted = true
+
+                print(
+                    "[TTS] actual playback started"
+                )
+
+                self.onPlaybackStarted?()
+            }
 
             analyzer?.analyze(
                 samples: samples,
@@ -423,6 +457,7 @@ final class KokoroTTSEngine {
 
         isSpeaking = false
         synthesisFinished = false
+        hasNotifiedPlaybackStarted = false
 
         synthesisTask = nil
 
@@ -455,6 +490,7 @@ final class KokoroTTSEngine {
         onSpectrum?(.zero)
 
         isSpeaking = false
+        hasNotifiedPlaybackStarted = false
 
         onFinished = nil
     }

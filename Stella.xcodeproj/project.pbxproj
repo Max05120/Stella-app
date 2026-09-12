@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		50184A243053A50B003B839E /* libc++.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 50184A233053A50B003B839E /* libc++.tbd */; };
 		50328765304576EE00DCCE96 /* Kokoro in Frameworks */ = {isa = PBXBuildFile; productRef = 50328764304576EE00DCCE96 /* Kokoro */; };
 		503287683045772000DCCE96 /* Kokoro in Frameworks */ = {isa = PBXBuildFile; productRef = 503287673045772000DCCE96 /* Kokoro */; };
 		5032877F304B408A00DCCE96 /* ggml-small.en.bin in Resources */ = {isa = PBXBuildFile; fileRef = 5032877E304B408A00DCCE96 /* ggml-small.en.bin */; };
@@ -30,6 +31,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		50184A233053A50B003B839E /* libc++.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = "libc++.tbd"; path = "usr/lib/libc++.tbd"; sourceTree = SDKROOT; };
 		5032877E304B408A00DCCE96 /* ggml-small.en.bin */ = {isa = PBXFileReference; lastKnownFileType = archive.macbinary; path = "ggml-small.en.bin"; sourceTree = "<group>"; };
 		50D3CFCE3041867B00022D5D /* Stella.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Stella.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		50D3CFFB304378C800022D5D /* whisper.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = whisper.xcframework; path = "../whisper.cpp/build-apple/whisper.xcframework"; sourceTree = "<group>"; };
@@ -62,6 +64,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				50184A243053A50B003B839E /* libc++.tbd in Frameworks */,
 				50D3CFFC304378C800022D5D /* whisper.xcframework in Frameworks */,
 				50328765304576EE00DCCE96 /* Kokoro in Frameworks */,
 				503287683045772000DCCE96 /* Kokoro in Frameworks */,
@@ -91,6 +94,7 @@
 		50D3CFFA304378C700022D5D /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
+				50184A233053A50B003B839E /* libc++.tbd */,
 				50D3CFFF304379F900022D5D /* ggml-base.en.bin */,
 				5032877E304B408A00DCCE96 /* ggml-small.en.bin */,
 				50D3CFFB304378C800022D5D /* whisper.xcframework */,
@@ -138,6 +142,7 @@
 				TargetAttributes = {
 					50D3CFCD3041867B00022D5D = {
 						CreatedOnToolsVersion = 26.6;
+						LastSwiftMigration = 2660;
 					};
 				};
 			};
@@ -309,6 +314,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
@@ -324,6 +330,10 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/Stella/Voice/Audio/WebRTCNative",
+				);
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.dukeauth.Stella;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -332,6 +342,8 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "Stella/Stella-Bridging-Header.h";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 			};
@@ -342,6 +354,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
@@ -357,6 +370,10 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/Stella/Voice/Audio/WebRTCNative",
+				);
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.dukeauth.Stella;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -365,6 +382,7 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "Stella/Stella-Bridging-Header.h";
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 			};

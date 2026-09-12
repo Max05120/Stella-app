@@ -57,6 +57,41 @@ actor WhisperTranscriber {
         if let context {
             whisper_free(context)
         }
+        
+    }
+    // MARK: - Completed Utterance
+
+    /// New Stella voice pipeline entry point.
+    ///
+    /// TurnDetector owns speech segmentation.
+    /// Whisper receives exactly one completed utterance.
+    ///
+    /// The microphone may run at 44.1 kHz, 48 kHz, or another
+    /// hardware-native rate, so the completed utterance is converted
+    /// to Whisper's required 16 kHz format here.
+    func transcribe(
+        utterance: TurnDetector.Utterance
+    ) throws -> String {
+
+        let whisperSamples =
+            try WhisperAudioResampler.resample(
+                samples: utterance.samples,
+                from: utterance.sampleRate
+            )
+
+        print(
+            String(
+                format:
+                    "[WHISPER] input %.0fHz → 16000Hz, %d → %d samples",
+                utterance.sampleRate,
+                utterance.samples.count,
+                whisperSamples.count
+            )
+        )
+
+        return try transcribe(
+            samples: whisperSamples
+        )
     }
     
     func transcribe(samples: [Float]) throws -> String {

@@ -81,6 +81,7 @@ final class MicrophoneRecorder: ObservableObject {
 
     private let sampleBuffer =
         LockedSampleBuffer()
+    
     var sampleCount: Int {
         sampleBuffer.count()
     }

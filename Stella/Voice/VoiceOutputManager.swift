@@ -15,8 +15,15 @@ final class VoiceOutputManager:
 
     private let kokoro: KokoroTTSEngine
     
-    init(sharedEngine: AVAudioEngine) {
-        kokoro = KokoroTTSEngine(sharedEngine: sharedEngine)
+    init(
+        sharedEngine: AVAudioEngine,
+        audioPreprocessor: AudioPreprocessor? = nil
+    ) {
+        kokoro =
+            KokoroTTSEngine(
+                sharedEngine: sharedEngine,
+                audioPreprocessor: audioPreprocessor
+            )
     }
 
     private let avSpeech =
