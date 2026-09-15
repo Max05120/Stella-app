@@ -21,6 +21,22 @@ final class WebRTCAudioProcessor: AudioPreprocessor {
     private var didLogRenderProcessing = false
 
     private let lock = NSLock()
+    struct BargeDiagnostics: Sendable {
+        let renderRMS: Float
+        let rawCaptureRMS: Float
+        let processedCaptureRMS: Float
+
+        var captureToRenderRatio: Float {
+            processedCaptureRMS /
+            max(renderRMS, 0.0001)
+        }
+    }
+
+    private var latestRenderRMS: Float = 0
+    private var latestRawCaptureRMS: Float = 0
+    private var latestProcessedCaptureRMS: Float = 0
+
+//    private var diagnosticsFrameCounter = 0
 
     var isReady: Bool {
         guard let handle else {
@@ -71,15 +87,19 @@ final class WebRTCAudioProcessor: AudioPreprocessor {
         while captureRemainder.count >= captureFrameSize {
 
             var frame = Array(
-                captureRemainder.prefix(captureFrameSize)
+                captureRemainder.prefix(
+                    captureFrameSize
+                )
             )
 
             captureRemainder.removeFirst(
                 captureFrameSize
             )
-            
+
             let rawRMS = sqrt(
-                frame.reduce(0) { $0 + $1 * $1 } /
+                frame.reduce(0) {
+                    $0 + $1 * $1
+                } /
                 Float(frame.count)
             )
 
@@ -87,7 +107,8 @@ final class WebRTCAudioProcessor: AudioPreprocessor {
                 frame.withUnsafeMutableBufferPointer { buffer in
 
                     guard let baseAddress =
-                            buffer.baseAddress else {
+                            buffer.baseAddress
+                    else {
                         return false
                     }
 
@@ -98,20 +119,19 @@ final class WebRTCAudioProcessor: AudioPreprocessor {
                         captureSampleRate
                     )
                 }
-            
+
             let processedRMS = sqrt(
-                frame.reduce(0) { $0 + $1 * $1 } /
+                frame.reduce(0) {
+                    $0 + $1 * $1
+                } /
                 Float(frame.count)
             )
-            
-//            if rawRMS > 0.005 {
-////                print(
-////                    "[WEBRTC AEC] raw:",
-////                    String(format: "%.4f", rawRMS),
-////                    "processed:",
-////                    String(format: "%.4f", processedRMS)
-////                )
-//            }
+
+            latestRawCaptureRMS =
+                rawRMS
+
+            latestProcessedCaptureRMS =
+                processedRMS
 
             if !success {
                 print(
@@ -127,6 +147,7 @@ final class WebRTCAudioProcessor: AudioPreprocessor {
         return processedSamples
     }
 
+    
     func processRender(_ samples: [Float]) {
         guard !samples.isEmpty else {
             return
@@ -152,6 +173,16 @@ final class WebRTCAudioProcessor: AudioPreprocessor {
             renderRemainder.removeFirst(
                 renderFrameSize
             )
+            
+            let renderRMS = sqrt(
+                frame.reduce(0) {
+                    $0 + $1 * $1
+                } /
+                Float(frame.count)
+            )
+
+            latestRenderRMS =
+                renderRMS
 
             let success =
                 frame.withUnsafeBufferPointer { buffer in
@@ -182,6 +213,20 @@ final class WebRTCAudioProcessor: AudioPreprocessor {
             }
         }
     }
+    
+    func currentBargeDiagnostics()
+        -> BargeDiagnostics
+    {
+        lock.lock()
+        defer { lock.unlock() }
+
+        return BargeDiagnostics(
+            renderRMS: latestRenderRMS,
+            rawCaptureRMS: latestRawCaptureRMS,
+            processedCaptureRMS:
+                latestProcessedCaptureRMS
+        )
+    }
 
     func reset() {
         lock.lock()
@@ -193,7 +238,11 @@ final class WebRTCAudioProcessor: AudioPreprocessor {
         renderRemainder.removeAll(
             keepingCapacity: true
         )
-
+        latestRenderRMS = 0
+        latestRawCaptureRMS = 0
+        latestProcessedCaptureRMS = 0
+//        diagnosticsFrameCounter = 0
+        
         didLogRenderProcessing = false
 
         lock.unlock()

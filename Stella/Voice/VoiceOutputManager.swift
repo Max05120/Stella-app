@@ -12,6 +12,7 @@ final class VoiceOutputManager:
     @Published private(set)
     var spectrum:
         AudioSpectrum = .zero
+    var onPlaybackStarted: (() -> Void)?
 
     private let kokoro: KokoroTTSEngine
     
@@ -24,6 +25,11 @@ final class VoiceOutputManager:
                 sharedEngine: sharedEngine,
                 audioPreprocessor: audioPreprocessor
             )
+        kokoro.onPlaybackStarted = {
+                [weak self] in
+
+                self?.onPlaybackStarted?()
+            }
     }
 
     private let avSpeech =

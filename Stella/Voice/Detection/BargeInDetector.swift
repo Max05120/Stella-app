@@ -9,7 +9,6 @@ final class BargeInDetector {
     private var consecutiveSpeechFrames = 0
     private var triggered = false
 
-    // Residual echo baseline measured while Stella speaks.
     private var playbackNoiseFloor: Float = 0
     private var calibrationFrames = 0
 
@@ -20,14 +19,9 @@ final class BargeInDetector {
             requiredSpeechFrames
     }
 
-    /// Call while Stella is speaking but barge-in is not armed yet.
     func calibrate(
         frame: AudioCaptureEngine.CaptureFrame
     ) {
-
-        guard !frame.samples.isEmpty else {
-            return
-        }
 
         let result =
             vad.process(
@@ -44,7 +38,6 @@ final class BargeInDetector {
 
         } else {
 
-            // Slowly follow the residual playback level.
             playbackNoiseFloor =
                 (playbackNoiseFloor * 0.90)
                 +
@@ -67,11 +60,6 @@ final class BargeInDetector {
                 samples: frame.samples
             )
 
-        // Important:
-        // VAD speech alone is not enough while Stella is playing.
-        //
-        // The signal also has to rise meaningfully above the
-        // AEC residual level we measured during playback.
         let residualGate =
             max(
                 result.speechThreshold,
@@ -79,8 +67,7 @@ final class BargeInDetector {
             )
 
         let likelyUserSpeech =
-            result.isSpeech
-            &&
+            result.isSpeech &&
             result.rms > residualGate
 
         if likelyUserSpeech {
@@ -93,10 +80,10 @@ final class BargeInDetector {
                 triggered = true
 
                 print(
-                    "[BARGE] confirmed "
-                    + "rms=\(result.rms) "
-                    + "gate=\(residualGate) "
-                    + "baseline=\(playbackNoiseFloor)"
+                    "[BARGE] confirmed " +
+                    "rms=\(result.rms) " +
+                    "gate=\(residualGate) " +
+                    "baseline=\(playbackNoiseFloor)"
                 )
 
                 return true
@@ -106,8 +93,6 @@ final class BargeInDetector {
 
             consecutiveSpeechFrames = 0
 
-            // Continue adapting slowly while we believe
-            // this is only playback residual.
             playbackNoiseFloor =
                 (playbackNoiseFloor * 0.98)
                 +

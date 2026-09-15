@@ -43,7 +43,15 @@ final class VoiceConversationManager:
     private let bargeInDetector = BargeInDetector()
     
     private var bargeInArmed = false
+    private var bargeDiagnosticsCounter = 0
     private var bargeInArmTask: Task<Void, Never>?
+    private var currentSpeechAllowsBargeIn = false
+//    private var bargeInPreRoll:
+//        [AudioCaptureEngine.CaptureFrame] = []
+//
+//    // WebRTC capture is 10 ms/frame,
+//    // so 40 frames ≈ 400 ms.
+//    private let bargeInPreRollFrameLimit = 40
 
     private var audioListenerID: UUID?
 //    let audioCapture: AudioCaptureCoordinator
@@ -171,6 +179,16 @@ final class VoiceConversationManager:
                 sharedEngine: captureEngine.playbackEngine,
                 audioPreprocessor: processor
             )
+        
+        self.output.onPlaybackStarted = {
+            [weak self] in
+
+            guard let self else {
+                return
+            }
+
+            self.handlePlaybackStarted()
+        }
 
         loadWhisper()
 
@@ -430,49 +448,75 @@ final class VoiceConversationManager:
                     switch self.state {
 
                     case .listening:
+                        self.handleTurnDetectorFrame(frame)
 
-                        if let event =
-                            self.turnDetector.process(
-                                frame: frame
-                            )
-                        {
-                            switch event {
+//                        if let event =
+//                            self.turnDetector.process(
+//                                frame: frame
+//                            )
+//                        {
+//                            switch event {
+//
+//                            case .speechStarted:
+//
+//                                print(
+//                                    "[VOICE] turn detector speech started"
+//                                )
+//
+//                            case .speechEnded(let utterance):
+//
+//                                print(
+//                                    "[VOICE] turn completed — \(String(format: "%.2f", utterance.duration))s"
+//                                )
+//
+//                                self.handleCompletedUtterance(
+//                                    utterance
+//                                )
+//                            }
+//                        }
 
-                            case .speechStarted:
+                   case .speaking:
+                            
+                            if !self.bargeInArmed {
 
-                                print(
-                                    "[VOICE] turn detector speech started"
+                                self.bargeInDetector.calibrate(
+                                    frame: frame
                                 )
 
-                            case .speechEnded(let utterance):
+                                break
+                            }
+
+                            self.bargeDiagnosticsCounter += 1
+
+                            // Log roughly every 100 ms.
+                            //
+                            // Capture frames are ~10 ms each.
+                            if self.bargeDiagnosticsCounter >= 10 {
+
+                                self.bargeDiagnosticsCounter = 0
+
+                                let diag =
+                                    self.webRTCProcessor
+                                        .currentBargeDiagnostics()
 
                                 print(
-                                    "[VOICE] turn completed — \(String(format: "%.2f", utterance.duration))s"
-                                )
-
-                                self.handleCompletedUtterance(
-                                    utterance
+                                    String(
+                                        format:
+                                            "[BARGE-DIAG] render=%.4f raw=%.4f processed=%.4f ratio=%.3f",
+                                        diag.renderRMS,
+                                        diag.rawCaptureRMS,
+                                        diag.processedCaptureRMS,
+                                        diag.captureToRenderRatio
+                                    )
                                 )
                             }
-                        }
 
-                    case .speaking:
-
-                        if !self.bargeInArmed {
-
-                            self.bargeInDetector.calibrate(
+                            if self.bargeInDetector.process(
                                 frame: frame
-                            )
-
-                            break
-                        }
-
-                        if self.bargeInDetector.process(
-                            frame: frame
-                        ) {
-                            self.handleNaturalBargeIn()
-                        }
-
+                            ) {
+                                self.handleNaturalBargeIn()
+                            }
+//
                     default:
                         break
                     }
@@ -488,6 +532,39 @@ final class VoiceConversationManager:
         startSpectrumUpdates()
     }
     
+    private func handleTurnDetectorFrame(
+        _ frame: AudioCaptureEngine.CaptureFrame
+    ) {
+        guard let event =
+            turnDetector.process(
+                frame: frame
+            )
+        else {
+            return
+        }
+
+        switch event {
+
+        case .speechStarted:
+            print(
+                "[VOICE] turn detector speech started"
+            )
+
+        case .speechEnded(let utterance):
+            print(
+                String(
+                    format:
+                        "[VOICE] turn completed — %.2fs",
+                    Double(utterance.samples.count)
+                        / Double(utterance.sampleRate)
+                )
+            )
+
+            handleCompletedUtterance(
+                utterance
+            )
+        }
+    }
     // MARK: - Silence detection
     
 //    private func startSilenceDetection() {
@@ -687,6 +764,45 @@ final class VoiceConversationManager:
                         error.localizedDescription
                     )
             }
+        }
+    }
+    
+    
+    
+    // MARK: - Playback Helper
+    private func handlePlaybackStarted() {
+
+        guard state == .speaking,
+              currentSpeechAllowsBargeIn,
+              !bargeInArmed
+        else {
+            return
+        }
+
+        bargeInArmTask?.cancel()
+
+        bargeInArmTask = Task {
+            @MainActor [weak self] in
+
+            guard let self else {
+                return
+            }
+
+            try? await Task.sleep(
+                for: .milliseconds(350)
+            )
+
+            guard !Task.isCancelled,
+                  self.state == .speaking,
+                  self.output.isSpeaking,
+                  self.currentSpeechAllowsBargeIn
+            else {
+                return
+            }
+
+            self.bargeInArmed = true
+
+            print("[BARGE] detector armed")
         }
     }
     
@@ -970,7 +1086,7 @@ final class VoiceConversationManager:
         allowBargeIn: Bool = false,
         then: @escaping () -> Void
     ) {
-        
+
         state = settingState
 
         bargeInDetector.reset()
@@ -979,30 +1095,7 @@ final class VoiceConversationManager:
         bargeInArmTask = nil
 
         bargeInArmed = false
-
-        if allowBargeIn {
-
-//            bargeInArmTask = Task { @MainActor [weak self] in
-//
-//                try? await Task.sleep(
-//                    for: .milliseconds(350)
-//                )
-//
-//                guard !Task.isCancelled,
-//                      let self,
-//                      self.state == .speaking,
-//                      self.output.isSpeaking
-//                else {
-//                    return
-//                }
-//
-//                self.bargeInArmed = true
-//
-//                print(
-//                    "[BARGE] detector armed"
-//                )
-//            }
-        }
+        currentSpeechAllowsBargeIn = allowBargeIn
 
         output.speak(text) { [weak self] in
 
@@ -1012,7 +1105,9 @@ final class VoiceConversationManager:
 
             self.bargeInArmTask?.cancel()
             self.bargeInArmTask = nil
+
             self.bargeInArmed = false
+            self.currentSpeechAllowsBargeIn = false
 
             self.bargeInTask?.cancel()
             self.bargeInTask = nil
@@ -1078,19 +1173,19 @@ final class VoiceConversationManager:
     private func handleNaturalBargeIn() {
 
         guard state == .speaking,
-              bargeInArmed
+              bargeInArmed,
+              currentSpeechAllowsBargeIn
         else {
             return
         }
 
         bargeInArmed = false
+        currentSpeechAllowsBargeIn = false
 
         bargeInArmTask?.cancel()
         bargeInArmTask = nil
 
-        print(
-            "[BARGE] user speech detected"
-        )
+        print("[BARGE] user speech detected")
 
         didBargeIn = true
 
@@ -1105,6 +1200,20 @@ final class VoiceConversationManager:
             "[BARGE] Stella interrupted — listening"
         )
     }
+    
+//    private func appendBargeInPreRoll(
+//        _ frame: AudioCaptureEngine.CaptureFrame
+//    ) {
+//        bargeInPreRoll.append(frame)
+//
+//        let overflow =
+//            bargeInPreRoll.count
+//            - bargeInPreRollFrameLimit
+//
+//        if overflow > 0 {
+//            bargeInPreRoll.removeFirst(overflow)
+//        }
+//    }
 //    private func watchForBargeIn() {
 //        
 //        bargeInTask?.cancel()

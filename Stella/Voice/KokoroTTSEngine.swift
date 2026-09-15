@@ -23,7 +23,7 @@ final class KokoroTTSEngine {
     private let analyzer = AudioSpectrumAnalyzer()
     private weak var audioPreprocessor: AudioPreprocessor?
 
-    private var pipeline: KPipeline?
+    private let synthesisWorker = KokoroSynthesisWorker()
     private var isPrepared = false
     private var isSpeaking = false
 
@@ -87,29 +87,11 @@ final class KokoroTTSEngine {
 
         let started = CFAbsoluteTimeGetCurrent()
 
-        let model =
-            try KModel(
-                configURL: configURL,
-                weightsURL: weightsURL
-            )
-
-        let voices =
-            VoiceLoader(
-                baseDirectory: voicesDirectory,
-                enableDownload: false
-            )
-
-        _ = try voices.loadVoice(
-            named: voice
+        try await synthesisWorker.prepare(
+            configURL: configURL,
+            weightsURL: weightsURL,
+            voicesDirectory: voicesDirectory
         )
-
-        pipeline =
-            KPipeline(
-                model: model,
-                voices: voices,
-                sampleRate: sampleRate,
-                langCode: "en-us"
-            )
 
         try configureAudioEngine()
 
@@ -138,8 +120,7 @@ final class KokoroTTSEngine {
         
     {
         guard
-            isPrepared,
-            let pipeline
+            isPrepared
         else {
             print("[TTS] Kokoro not prepared")
             onFinished?()
@@ -185,11 +166,11 @@ final class KokoroTTSEngine {
 
                 do {
                     let result =
-                        try pipeline.synthesize(
-                            text: chunk,
-                            voice: self.voice,
-                            speed: speed
-                        )
+                    try await self.synthesisWorker
+                            .synthesize(
+                                text: chunk,
+                                speed: speed
+                            )
 
                     let elapsed =
                         CFAbsoluteTimeGetCurrent()
