@@ -4,20 +4,23 @@ final class BargeInDetector {
 
     private let vad = VoiceActivityDetector()
 
-    private let requiredSpeechFrames: Int
+    // Capture frames are ~10 ms.
+    //
+    // Keep the most recent 100 ms of speech decisions.
+    private let voteWindowSize = 10
 
-    private var consecutiveSpeechFrames = 0
+    // 7 speech-positive frames out of the last 10
+    // are required for confirmation.
+    //
+    // They do NOT need to be consecutive.
+    private let requiredSpeechVotes = 7
+
+    private var speechVotes: [Bool] = []
+
     private var triggered = false
 
     private var playbackNoiseFloor: Float = 0
     private var calibrationFrames = 0
-
-    init(
-        requiredSpeechFrames: Int = 6
-    ) {
-        self.requiredSpeechFrames =
-            requiredSpeechFrames
-    }
 
     func calibrate(
         frame: AudioCaptureEngine.CaptureFrame
@@ -70,41 +73,101 @@ final class BargeInDetector {
             result.isSpeech &&
             result.rms > residualGate
 
-        if likelyUserSpeech {
+        // ----------------------------------------
+        // Rolling 100 ms speech-vote window
+        // ----------------------------------------
 
-            consecutiveSpeechFrames += 1
+        speechVotes.append(
+            likelyUserSpeech
+        )
 
-            if consecutiveSpeechFrames >=
-                requiredSpeechFrames
-            {
-                triggered = true
+        if speechVotes.count >
+            voteWindowSize
+        {
+            speechVotes.removeFirst(
+                speechVotes.count -
+                voteWindowSize
+            )
+        }
 
-                print(
-                    "[BARGE] confirmed " +
-                    "rms=\(result.rms) " +
-                    "gate=\(residualGate) " +
-                    "baseline=\(playbackNoiseFloor)"
-                )
+        // Do not make a decision until we have
+        // accumulated the full 100 ms window.
+        guard speechVotes.count ==
+                voteWindowSize
+        else {
+            updatePlaybackNoiseFloor(
+                rms: result.rms,
+                likelyUserSpeech:
+                    likelyUserSpeech
+            )
 
-                return true
+            return false
+        }
+
+        let speechVoteCount =
+            speechVotes.reduce(0) {
+                partialResult,
+                isSpeech in
+
+                partialResult +
+                    (isSpeech ? 1 : 0)
             }
 
-        } else {
+        // ----------------------------------------
+        // Diagnostic candidate
+        // ----------------------------------------
 
-            consecutiveSpeechFrames = 0
+        if speechVoteCount >=
+            requiredSpeechVotes
+        {
+            triggered = true
 
-            playbackNoiseFloor =
-                (playbackNoiseFloor * 0.98)
-                +
-                (result.rms * 0.02)
+            print(
+                "[BARGE-VOTE] confirmed " +
+                "votes=\(speechVoteCount)/\(voteWindowSize) " +
+                "rms=\(result.rms) " +
+                "gate=\(residualGate) " +
+                "baseline=\(playbackNoiseFloor)"
+            )
+
+            return true
         }
+
+        updatePlaybackNoiseFloor(
+            rms: result.rms,
+            likelyUserSpeech:
+                likelyUserSpeech
+        )
 
         return false
     }
 
+    private func updatePlaybackNoiseFloor(
+        rms: Float,
+        likelyUserSpeech: Bool
+    ) {
+
+        // Don't aggressively teach possible speech
+        // into Stella's playback residual baseline.
+        //
+        // Only slowly adapt when the current frame
+        // is NOT considered speech-like.
+        guard !likelyUserSpeech else {
+            return
+        }
+
+        playbackNoiseFloor =
+            (playbackNoiseFloor * 0.98)
+            +
+            (rms * 0.02)
+    }
+
     func reset() {
 
-        consecutiveSpeechFrames = 0
+        speechVotes.removeAll(
+            keepingCapacity: true
+        )
+
         triggered = false
 
         playbackNoiseFloor = 0

@@ -502,19 +502,32 @@ final class VoiceConversationManager:
                                 print(
                                     String(
                                         format:
-                                            "[BARGE-DIAG] render=%.4f raw=%.4f processed=%.4f ratio=%.3f",
+                                            "[BARGE-DIAG] render=%.4f env=%.4f raw=%.4f processed=%.4f suppression=%.3f corr=%.3f lag=%dms",
                                         diag.renderRMS,
+                                        diag.renderEnvelope,
                                         diag.rawCaptureRMS,
                                         diag.processedCaptureRMS,
-                                        diag.captureToRenderRatio
+                                        diag.suppressionRatio,
+                                        diag.renderCorrelation,
+                                        diag.correlationLagMs
                                     )
                                 )
                             }
 
+//                            if self.bargeInDetector.process(
+//                                frame: frame
+//                            ) {
+//                                self.handleNaturalBargeIn()
+//                            }
                             if self.bargeInDetector.process(
                                 frame: frame
                             ) {
-                                self.handleNaturalBargeIn()
+                                print(
+                                    "[BARGE-VOTE] would have interrupted"
+                                )
+
+                                // Diagnostic mode:
+                                // deliberately do NOT interrupt Stella.
                             }
 //
                     default:
