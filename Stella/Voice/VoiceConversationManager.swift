@@ -155,6 +155,7 @@ final class VoiceConversationManager:
     ]
     
     private var audioGraphReadyTask: Task<Void, Never>?
+    private var thermalStateObserver: NSObjectProtocol?
 //    let webRTCProcessor = WebRTCAudioProcessor()
     
     init(
@@ -194,6 +195,75 @@ final class VoiceConversationManager:
 
         audioGraphReadyTask = Task {
             await output.prepare()
+        }
+
+        observeThermalState()
+    }
+
+    deinit {
+        if let thermalStateObserver {
+            NotificationCenter.default.removeObserver(
+                thermalStateObserver
+            )
+        }
+    }
+
+    // MARK: - Thermal State
+    //
+    // Cheap, always-on diagnostic: two consecutive real sessions
+    // showed AEC3's delay estimate swinging wildly (and once
+    // resetting from a buffer overrun) only late in the longest,
+    // most chunk-heavy turn — right where Kokoro's own chunk
+    // generation time also ballooned (2s → 7s). That pattern looks
+    // like system-wide load or thermal throttling building up over
+    // a long conversation, not something specific to the audio
+    // pipeline. This makes it directly visible in the log instead
+    // of guessed at.
+    private func observeThermalState() {
+
+        print(
+            "[THERMAL] initial state: " +
+            Self.describeThermalState(
+                ProcessInfo.processInfo.thermalState
+            )
+        )
+
+        thermalStateObserver =
+            NotificationCenter.default.addObserver(
+                forName: ProcessInfo.thermalStateDidChangeNotification,
+                object: nil,
+                queue: nil
+            ) { _ in
+
+                print(
+                    "[THERMAL] state changed: " +
+                    Self.describeThermalState(
+                        ProcessInfo.processInfo.thermalState
+                    )
+                )
+            }
+    }
+
+    private static func describeThermalState(
+        _ state: ProcessInfo.ThermalState
+    ) -> String {
+
+        switch state {
+
+        case .nominal:
+            return "nominal"
+
+        case .fair:
+            return "fair"
+
+        case .serious:
+            return "serious"
+
+        case .critical:
+            return "critical"
+
+        @unknown default:
+            return "unknown(\(state.rawValue))"
         }
     }
     
@@ -486,50 +556,66 @@ final class VoiceConversationManager:
                                 break
                             }
 
-                            self.bargeDiagnosticsCounter += 1
+                            let decisions =
+                                self.bargeInDetector.process(
+                                    frame: frame
+                                )
 
-                            // Log roughly every 100 ms.
-                            //
-                            // Capture frames are ~10 ms each.
-                            if self.bargeDiagnosticsCounter >= 10 {
+                            for decision in decisions {
 
-                                self.bargeDiagnosticsCounter = 0
+                                self.bargeDiagnosticsCounter += 1
 
-                                let diag =
-                                    self.webRTCProcessor
-                                        .currentBargeDiagnostics()
+                                // Log roughly every 100 ms. Every
+                                // field below was computed from the
+                                // SAME sub-frame — VAD, suppression,
+                                // and correlation are no longer
+                                // fetched separately at different
+                                // moments.
+                                if self.bargeDiagnosticsCounter >= 10 {
 
-                                print(
-                                    String(
-                                        format:
-                                            "[BARGE-DIAG] render=%.4f env=%.4f raw=%.4f processed=%.4f suppression=%.3f corr=%.3f lag=%dms",
-                                        diag.renderRMS,
-                                        diag.renderEnvelope,
-                                        diag.rawCaptureRMS,
-                                        diag.processedCaptureRMS,
-                                        diag.suppressionRatio,
-                                        diag.renderCorrelation,
-                                        diag.correlationLagMs
+                                    self.bargeDiagnosticsCounter = 0
+
+                                    let evidence = decision.evidence
+
+                                    print(
+                                        String(
+                                            format:
+                                                "[BARGE-EVIDENCE] vad=%@ rms=%.4f gate=%.4f suppression=%.3f corr=%.3f frame=%.2f window=%.2f/%.2f speechFrames=%ld/%ld",
+                                            evidence.isSpeechVAD ? "Y" : "N",
+                                            evidence.rms,
+                                            evidence.residualGate,
+                                            evidence.suppressionRatio,
+                                            evidence.correlation,
+                                            evidence.frameEvidence,
+                                            evidence.windowEvidence,
+                                            self.bargeInDetector.requiredWindowEvidence,
+                                            evidence.speechGateFramesInWindow,
+                                            evidence.framesInWindow
+                                        )
                                     )
-                                )
+                                }
+
+                                if decision.triggered {
+
+                                    print(
+                                        "[BARGE-VOTE] would have interrupted — " +
+                                        "window=\(decision.evidence.windowEvidence) " +
+                                        "speechFrames=\(decision.evidence.speechGateFramesInWindow)/\(decision.evidence.framesInWindow)"
+                                    )
+
+                                    // Still observe-only, on purpose:
+                                    // uncomment the line below once
+                                    // logged [BARGE-EVIDENCE] sessions
+                                    // across real interruptions,
+                                    // residual bursts, and
+                                    // environmental transients show
+                                    // this threshold is reliable.
+//                                  self.handleNaturalBargeIn()
+
+                                    break
+                                }
                             }
 
-//                            if self.bargeInDetector.process(
-//                                frame: frame
-//                            ) {
-//                                self.handleNaturalBargeIn()
-//                            }
-                            if self.bargeInDetector.process(
-                                frame: frame
-                            ) {
-                                print(
-                                    "[BARGE-VOTE] would have interrupted"
-                                )
-
-                                // Diagnostic mode:
-                                // deliberately do NOT interrupt Stella.
-                            }
-//
                     default:
                         break
                     }
@@ -581,80 +667,80 @@ final class VoiceConversationManager:
     // MARK: - Silence detection
     
 //    private func startSilenceDetection() {
-//        
+//
 //        silenceTask?.cancel()
-//        
+//
 //        silenceTask = Task {
 //            [weak self] in
-//            
+//
 //            guard let self else {
 //                return
 //            }
-//            
+//
 //            var heardSpeech = false
-//            
+//
 //            var speechStartedAt:
 //            Date?
-//            
+//
 //            var lastSpeechAt:
 //            Date?
-//            
+//
 //            var speechStartSample:
 //            Int?
-//            
+//
 //            while !Task.isCancelled {
-//                
+//
 //                try? await Task.sleep(
 //                    for: .milliseconds(100)
 //                )
-//                
+//
 //                guard !Task.isCancelled else {
 //                    return
 //                }
-//                
+//
 ////                guard
 ////                    self.state == .listening,
 //////                    self.recorder.isRecording
 ////                else {
 ////                    return
 ////                }
-////                
+////
 ////                let level =
 ////                self.recorder.level
-//                
+//
 //                let now = Date()
-//                
+//
 ////                if level > self.speechThreshold {
-//                    
+//
 //                    if candidateSpeechStartedAt == nil {
 //                        candidateSpeechStartedAt = now
 //                    }
-//                    
+//
 //                    if !heardSpeech,
 //                       let candidateStart = candidateSpeechStartedAt,
 //                       now.timeIntervalSince(candidateStart) >= self.speechConfirmationDuration {
-//                        
+//
 //                        heardSpeech = true
 //                        speechStartedAt = candidateStart
 //                        speechStartSample = self.recorder.sampleCount
-//                        
+//
 //                        print(
 //                            "[VOICE] confirmed speech at sample \(speechStartSample ?? 0)"
 //                        )
 //                    }
-//                    
+//
 //                    if heardSpeech {
 //                        lastSpeechAt = now
 //                    }
-//                    
+//
 //                } else {
-//                    
+//
 //                    // Noise spike wasn't sustained long enough.
 //                    if !heardSpeech {
 //                        candidateSpeechStartedAt = nil
 //                    }
 //                }
-//                
+//
 //                guard
 //                    heardSpeech,
 //                    let speechStartedAt,
@@ -662,17 +748,17 @@ final class VoiceConversationManager:
 //                else {
 //                    continue
 //                }
-//                
+//
 //                let speechLength =
 //                now.timeIntervalSince(
 //                    speechStartedAt
 //                )
-//                
+//
 //                let silenceLength =
 //                now.timeIntervalSince(
 //                    lastSpeechAt
 //                )
-//                
+//
 //                if (
 //                    speechLength >=
 //                    self.minimumSpeechDuration
@@ -680,24 +766,24 @@ final class VoiceConversationManager:
 //                    silenceLength >=
 //                    self.silenceDuration
 //                ) {
-//                    
+//
 //                    print(
 //                        "[VOICE] end of speech"
 //                    )
-//                    
+//
 //                    self.silenceTask = nil
-//                    
+//
 //                    self.finishUtterance(
 //                        speechStartSample:
 //                            speechStartSample
 //                    )
-//                    
+//
 //                    return
 //                }
 //            }
 //        }
 //    }
-//    
+//
     
     
 //    -----------------------
@@ -815,7 +901,12 @@ final class VoiceConversationManager:
 
             self.bargeInArmed = true
 
-            print("[BARGE] detector armed")
+            print(
+                "[BARGE] detector armed — thermal=" +
+                Self.describeThermalState(
+                    ProcessInfo.processInfo.thermalState
+                )
+            )
         }
     }
     
@@ -824,155 +915,155 @@ final class VoiceConversationManager:
 //    private func finishUtterance(
 //        speechStartSample: Int?
 //    ) {
-//        
+//
 //        guard recorder.isRecording else {
 //            return
 //        }
-//        
+//
 //        silenceTask?.cancel()
 //        silenceTask = nil
 //        stopSpectrumUpdates()
-//        
+//
 //        let recordedSamples =
 //        recorder.stop()
-//        
+//
 //        audioCapture.release(
 //            .conversation
 //        )
-//        
+//
 //        guard !recordedSamples.isEmpty else {
 //            startListening()
 //            return
 //        }
-//        
+//
 //        // Whisper runs at 16 kHz.
 //        //
 //        // Keep 400 ms before VAD's detected speech onset.
 //        // This preserves initial consonants/breath while removing
 //        // potentially several seconds of irrelevant room audio.
 //        let preRollSamples = 6_400
-//        
+//
 //        let samples: [Float]
-//        
+//
 //        if let speechStartSample {
-//            
+//
 //            let startIndex =
 //            max(
 //                0,
 //                speechStartSample
 //                - preRollSamples
 //            )
-//            
+//
 //            if startIndex <
 //                recordedSamples.count
 //            {
-//                
+//
 //                samples =
 //                Array(
 //                    recordedSamples[
 //                        startIndex...
 //                    ]
 //                )
-//                
+//
 //            } else {
-//                
+//
 //                samples =
 //                recordedSamples
 //            }
-//            
+//
 //        } else {
-//            
+//
 //            samples =
 //            recordedSamples
 //        }
-//        
+//
 //        print(
 //            "[VOICE] trimmed audio \(recordedSamples.count) → \(samples.count) samples"
 //        )
-//        
+//
 //        var squareSum: Float = 0
 //        for s in samples { squareSum += s * s }
 //        let utteranceRMS = sqrt(squareSum / Float(samples.count))
-//        
+//
 //        guard utteranceRMS >
 //                speechThreshold * 1.3
 //        else {
-//            
+//
 //            print(
 //                "[VOICE] discarding, too quiet: \(utteranceRMS)"
 //            )
-//            
+//
 //            startListening()
 //            return
-//            
+//
 //        }
-//        
+//
 //        state = .transcribing
-//        
+//
 //        conversationTask = Task {
 //            [weak self] in
-//            
+//
 //            guard let self,
 //                  let whisper =
 //                    self.whisper
 //            else {
 //                return
 //            }
-//            
+//
 //            do {
-//                
+//
 //                let started = Date()
-//                
+//
 //                let text =
 //                try await whisper
 //                    .transcribe(
 //                        samples: samples
 //                    )
-//                
+//
 //                guard !Task.isCancelled else {
 //                    return
 //                }
-//                
+//
 //                let elapsed =
 //                Date()
 //                    .timeIntervalSince(
 //                        started
 //                    ) * 1000
-//                
+//
 //                print(
 //                    "[VOICE] STT \(Int(elapsed))ms: \(text)"
 //                )
-//                
+//
 //                let cleaned =
 //                self.cleanTranscript(
 //                    text
 //                )
-//                
+//
 //                guard !cleaned.isEmpty else {
 //                    self.startListening()
 //                    return
 //                }
-//                
+//
 //                self.transcript = cleaned
-//                
+//
 //                // Handle Stella-local commands before sending anything
 //                // to the Python/backend conversation.
 //                if self.isSleepCommand(cleaned) {
-//                    
+//
 //                    print(
 //                        "[VOICE] sleep command detected: \(cleaned)"
 //                    )
-//                    
+//
 //                    self.sayIdleFarewell()
 //                    return
 //                }
-//                
+//
 //                await self.sendToStella(
 //                    cleaned
 //                )
-//                
+//
 //            } catch {
-//                
+//
 //                self.state =
 //                    .error(
 //                        error.localizedDescription
@@ -1228,114 +1319,114 @@ final class VoiceConversationManager:
 //        }
 //    }
 //    private func watchForBargeIn() {
-//        
+//
 //        bargeInTask?.cancel()
 //        bargeInTask = nil
-//        
+//
 //        bargeInTask = Task {
 //            [weak self] in
-//            
+//
 //            guard let self else {
 //                return
 //            }
-//            
+//
 //            // ----------------------------------------
 //            // Absolute safety gate.
 //            // Barge-in ONLY exists while Stella
 //            // is speaking an answer.
 //            // ----------------------------------------
-//            
+//
 //            guard
 //                self.state == .speaking,
 //                self.output.isSpeaking
 //            else {
 //                return
 //            }
-//            
+//
 //            self.audioCapture.claim(
 //                .interruption
 //            )
-//            
+//
 //            do {
-//                
+//
 //                if !self.recorder.isRecording {
 //                    try self.recorder.start()
 //                }
-//                
+//
 //            } catch {
-//                
+//
 //                print(
 //                    "[BARGE] mic failed:",
 //                    error.localizedDescription
 //                )
-//                
+//
 //                return
 //            }
-//            
-//            
+//
+//
 //            // Let playback settle before looking for
 //            // possible interruption.
 //            try? await Task.sleep(
 //                for: .milliseconds(400)
 //            )
-//            
+//
 //            var candidateStartedAt: Date?
-//            
-//            
+//
+//
 //            while !Task.isCancelled {
-//                
+//
 //                guard
 //                    self.state == .speaking,
 //                    self.output.isSpeaking
 //                else {
 //                    return
 //                }
-//                
+//
 //                try? await Task.sleep(
 //                    for: .milliseconds(30)
 //                )
-//                
+//
 //                guard !Task.isCancelled else {
 //                    return
 //                }
-//                
+//
 //                let level =
 //                self.recorder.level
-//                
-//                
+//
+//
 //                // ------------------------------------
 //                // Stage 1:
 //                // acoustic candidate ONLY
 //                // ------------------------------------
-//                
+//
 //                if level >
 //                    self.bargeInThreshold
 //                {
-//                    
+//
 //                    if candidateStartedAt == nil {
-//                        
+//
 //                        candidateStartedAt =
 //                        Date()
-//                        
+//
 //                        print(
 //                            "[BARGE] acoustic candidate \(level)"
 //                        )
 //                    }
-//                    
+//
 //                    guard
 //                        let candidateStart =
 //                            candidateStartedAt
 //                    else {
 //                        continue
 //                    }
-//                    
+//
 //                    let durationMs =
 //                    Date()
 //                        .timeIntervalSince(
 //                            candidateStart
 //                        ) * 1000
-//                    
-//                    
+//
+//
 //                    guard
 //                        durationMs >=
 //                            Double(
@@ -1344,95 +1435,95 @@ final class VoiceConversationManager:
 //                    else {
 //                        continue
 //                    }
-//                    
-//                    
+//
+//
 //                    // --------------------------------
 //                    // Something sustained was heard.
 //                    //
 //                    // DO NOT stop Stella yet.
 //                    // Verify the words first.
 //                    // --------------------------------
-//                    
+//
 //                    print(
 //                        "[BARGE] verifying candidate"
 //                    )
-//                    
+//
 //                    let recorded =
 //                    self.recorder.stop()
-//                    
+//
 //                    candidateStartedAt = nil
-//                    
-//                    
+//
+//
 //                    guard !recorded.isEmpty else {
-//                        
+//
 //                        self.restartBargeMonitoringMic()
 //                        continue
 //                    }
-//                    
-//                    
+//
+//
 //                    // Only inspect the most recent
 //                    // ~1.25 sec, not everything Stella
 //                    // has said since playback started.
 //                    let maxSamples =
 //                    20_000
-//                    
+//
 //                    let verificationSamples =
 //                    Array(
 //                        recorded.suffix(
 //                            maxSamples
 //                        )
 //                    )
-//                    
-//                    
+//
+//
 //                    guard
 //                        let whisper =
 //                            self.whisper
 //                    else {
 //                        return
 //                    }
-//                    
-//                    
+//
+//
 //                    do {
-//                        
+//
 //                        let text =
 //                        try await whisper
 //                            .transcribe(
 //                                samples:
 //                                    verificationSamples
 //                            )
-//                        
+//
 //                        guard !Task.isCancelled else {
 //                            return
 //                        }
-//                        
-//                        
+//
+//
 //                        print(
 //                            "[BARGE] heard: \(text)"
 //                        )
-//                        
-//                        
+//
+//
 //                        // --------------------------------
 //                        // Stage 2:
 //                        // LANGUAGE GATE
 //                        // --------------------------------
-//                        
+//
 //                        if self.isBargeInPhrase(
 //                            text
 //                        ) {
-//                            
+//
 //                            print(
 //                                "[BARGE] keyword confirmed: \(text)"
 //                            )
-//                            
+//
 //                            self.didBargeIn = true
-//                            
+//
 //                            // NOW Stella is allowed
 //                            // to stop speaking.
 //                            self.output.stop()
-//                            
+//
 //                            self.bargeInTask = nil
-//                            
-//                            
+//
+//
 //                            // The verification recording
 //                            // contained speaker bleed +
 //                            // interrupt keyword.
@@ -1447,21 +1538,21 @@ final class VoiceConversationManager:
 //                            }
 //
 //                            audioCaptureEngine.stop()
-//                            
+//
 //                            self.audioCapture.release(
 //                                .interruption
 //                            )
-//                        
+//
 //                            self.startListening()
-//                            
+//
 //                            print(
 //                                "[BARGE] interruption accepted"
 //                            )
-//                            
+//
 //                            return
-//                            
+//
 //                        } else {
-//                            
+//
 //                            // CRITICAL:
 //                            //
 //                            // This audio NEVER reaches
@@ -1472,50 +1563,50 @@ final class VoiceConversationManager:
 //                            print(
 //                                "[BARGE] rejected: no interrupt keyword"
 //                            )
-//                            
-//                            
+//
+//
 //                            // Continue monitoring while
 //                            // Stella keeps speaking.
 //                            self.restartBargeMonitoringMic()
 //                        }
-//                        
+//
 //                    } catch {
-//                        
+//
 //                        print(
 //                            "[BARGE] verification failed:",
 //                            error.localizedDescription
 //                        )
-//                        
+//
 //                        self.restartBargeMonitoringMic()
 //                    }
 //                }
-//                
+//
 //                else {
-//                    
+//
 //                    candidateStartedAt =
 //                    nil
 //                }
 //            }
 //        }
 //    }
-//    
+//
 //    private func restartBargeMonitoringMic() {
-//        
+//
 //        guard
 //            state == .speaking,
 //            output.isSpeaking
 //        else {
 //            return
 //        }
-//        
+//
 //        do {
-//            
+//
 //            if !recorder.isRecording {
 //                try recorder.start()
 //            }
-//            
+//
 //        } catch {
-//            
+//
 //            print(
 //                "[BARGE] couldn't restart mic:",
 //                error.localizedDescription

@@ -30,9 +30,17 @@ protocol AudioPreprocessor: AnyObject {
     /// Processes microphone audio before it is consumed by
     /// VAD, turn detection, Whisper, wake-word detection, etc.
     ///
-    /// Later, WebRTCAudioProcessor will perform AEC3,
-    /// noise suppression and optionally gain control here.
-    func processCapture(_ samples: [Float]) -> [Float]
+    /// Returns the processed audio broken into its true ~10 ms
+    /// sub-frames, each paired with the AEC metrics computed from
+    /// that exact sub-frame — so any consumer that needs both the
+    /// audio and its acoustic context (BargeInDetector) always sees
+    /// them in sync. Callers that only want the flat processed
+    /// signal (recording, Whisper, turn detection) can concatenate
+    /// `.samples` across the returned frames.
+    ///
+    /// WebRTCAudioProcessor performs AEC3, noise suppression, and
+    /// optionally gain control here.
+    func processCapture(_ samples: [Float]) -> [AECProcessedFrame]
 
     /// Supplies Stella's outgoing playback audio to the processor.
     ///

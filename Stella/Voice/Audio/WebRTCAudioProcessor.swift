@@ -21,28 +21,7 @@ final class WebRTCAudioProcessor: AudioPreprocessor {
     private var didLogRenderProcessing = false
 
     private let lock = NSLock()
-    struct BargeDiagnostics: Sendable {
-        let renderRMS: Float
-        let renderEnvelope: Float
-        
-        let rawCaptureRMS: Float
-        let processedCaptureRMS: Float
-        
-        let renderCorrelation: Float
-        let correlationLagMs: Int
-        
-        var suppressionRatio: Float {
-            processedCaptureRMS /
-            max(
-                rawCaptureRMS,
-                0.0001
-            )
-        }
-        var captureToRenderRatio: Float {
-            processedCaptureRMS /
-            max(renderRMS, 0.0001)
-        }
-    }
+
     
 
     private var latestRenderRMS: Float = 0
@@ -64,11 +43,28 @@ final class WebRTCAudioProcessor: AudioPreprocessor {
         4_800     // 100 ms @ 48 kHz
 
     private var rawCaptureHistory: [Float] = []
-    
-    private var latestRawCaptureRMS: Float = 0
-    private var latestProcessedCaptureRMS: Float = 0
 
-//    private var diagnosticsFrameCounter = 0
+    // Correlation is the most expensive computation here — a lag
+    // search over up to ~250 ms of render history, done every 10 ms
+    // once history fills. Running it synchronously inside the
+    // real-time capture callback is a real suspect for the
+    // HALC_ProxyIOContext::IOWorkLoop overload warnings and the
+    // AEC3 delay-instability / buffer-overrun-reset lines this
+    // project has logged in the same sessions where suppression
+    // stops looking meaningful. It now runs on a background queue,
+    // throttled, instead of inline on the capture thread.
+    private let correlationQueue = DispatchQueue(
+        label: "com.stella.aec.correlationAnalysis",
+        qos: .utility
+    )
+    private var correlationInFlight = false
+    private var framesSinceLastCorrelationUpdate = 0
+    private let correlationUpdateStride = 3   // roughly every ~30 ms
+
+    // Bumped by reset(). Lets a straggling background correlation
+    // result from a previous speaking turn recognize it's stale and
+    // discard itself instead of overwriting the new turn's data.
+    private var resetGeneration = 0
 
     var isReady: Bool {
         guard let handle else {
@@ -95,13 +91,32 @@ final class WebRTCAudioProcessor: AudioPreprocessor {
         }
     }
 
-    func processCapture(_ samples: [Float]) -> [Float] {
+    func processCapture(_ samples: [Float]) -> [AECProcessedFrame] {
         guard !samples.isEmpty else {
             return []
         }
 
         guard let handle, StellaAPMIsReady(handle) else {
-            return samples
+
+            // No AEC available — still hand back real sub-frame
+            // boundaries with zeroed metrics, matching
+            // PassthroughAudioProcessor's shape, so callers never
+            // have to special-case "AEC unavailable".
+            let metrics = AECFrameMetrics(
+                rawRMS: 0,
+                processedRMS: 0,
+                renderRMS: 0,
+                renderEnvelope: 0,
+                correlation: 0,
+                correlationLagMs: 0
+            )
+
+            return [
+                AECProcessedFrame(
+                    samples: samples,
+                    metrics: metrics
+                )
+            ]
         }
 
         lock.lock()
@@ -111,10 +126,7 @@ final class WebRTCAudioProcessor: AudioPreprocessor {
 
         captureRemainder.append(contentsOf: samples)
 
-        var processedSamples: [Float] = []
-        processedSamples.reserveCapacity(
-            captureRemainder.count
-        )
+        var processedFrames: [AECProcessedFrame] = []
 
         while captureRemainder.count >= captureFrameSize {
 
@@ -151,10 +163,7 @@ final class WebRTCAudioProcessor: AudioPreprocessor {
             if rawCaptureHistory.count ==
                 correlationCaptureCapacity
             {
-                updateRenderCorrelation(
-                    rawCaptureFrame:
-                        rawCaptureHistory
-                )
+                scheduleRenderCorrelationUpdate()
             }
             
             let success =
@@ -181,25 +190,34 @@ final class WebRTCAudioProcessor: AudioPreprocessor {
                 Float(frame.count)
             )
 
-            latestRawCaptureRMS =
-                rawRMS
-
-            latestProcessedCaptureRMS =
-                processedRMS
-            
-
             if !success {
                 print(
                     "[WEBRTC] capture processing failed"
                 )
             }
 
-            processedSamples.append(
-                contentsOf: frame
+            // Built right here, from the same rawRMS/processedRMS
+            // just computed for THIS frame, and from render/
+            // correlation state as it stands at this exact instant
+            // — not fetched later via a separate snapshot call.
+            let metrics = AECFrameMetrics(
+                rawRMS: rawRMS,
+                processedRMS: processedRMS,
+                renderRMS: latestRenderRMS,
+                renderEnvelope: renderEnvelopeLocked(),
+                correlation: latestRenderCorrelation,
+                correlationLagMs: latestCorrelationLagMs
+            )
+
+            processedFrames.append(
+                AECProcessedFrame(
+                    samples: frame,
+                    metrics: metrics
+                )
             )
         }
 
-        return processedSamples
+        return processedFrames
     }
 
     
@@ -296,7 +314,7 @@ final class WebRTCAudioProcessor: AudioPreprocessor {
         }
     }
     
-    private func normalizedCorrelation(
+    private static func normalizedCorrelation(
         _ capture: [Float],
         _ render: ArraySlice<Float>
     ) -> Float {
@@ -349,7 +367,7 @@ final class WebRTCAudioProcessor: AudioPreprocessor {
     }
     
     
-    private func downsampleCaptureTo24k(
+    private static func downsampleCaptureTo24k(
         _ samples: [Float]
     ) -> [Float] {
 
@@ -384,9 +402,69 @@ final class WebRTCAudioProcessor: AudioPreprocessor {
         return result
     }
     
-    private func updateRenderCorrelation(
-        rawCaptureFrame: [Float]
-    ) {
+    /// Kicks off an off-thread correlation update, throttled so it
+    /// runs roughly every `correlationUpdateStride` sub-frames
+    /// instead of every single one, and skipped entirely while a
+    /// previous update is still running. Must be called with `lock`
+    /// already held — it is, from inside `processCapture`.
+    private func scheduleRenderCorrelationUpdate() {
+
+        framesSinceLastCorrelationUpdate += 1
+
+        guard !correlationInFlight,
+              framesSinceLastCorrelationUpdate >=
+                correlationUpdateStride
+        else {
+            return
+        }
+
+        framesSinceLastCorrelationUpdate = 0
+        correlationInFlight = true
+
+        // Snapshots. Cheap right here — Swift arrays are
+        // copy-on-write, so this is a reference bump, not a copy,
+        // until one side mutates. The expensive lag search happens
+        // off the capture thread, on these frozen snapshots, not on
+        // the live history arrays the capture thread keeps mutating.
+        let captureSnapshot = rawCaptureHistory
+        let renderSnapshot = renderWaveformHistory
+        let generation = resetGeneration
+
+        correlationQueue.async { [weak self] in
+
+            guard let self else {
+                return
+            }
+
+            let result = Self.computeRenderCorrelation(
+                rawCaptureFrame: captureSnapshot,
+                renderHistory: renderSnapshot
+            )
+
+            self.lock.lock()
+            defer { self.lock.unlock() }
+
+            guard self.resetGeneration == generation else {
+                // A reset happened while this was computing — this
+                // result describes audio from a turn that no longer
+                // exists. Discard it rather than overwriting
+                // whatever the new turn has already measured.
+                return
+            }
+
+            self.latestRenderCorrelation = result.correlation
+            self.latestCorrelationLagMs = result.lagMs
+            self.correlationInFlight = false
+        }
+    }
+
+    /// Pure: takes explicit snapshots instead of touching instance
+    /// state, so it can run safely on a background queue while the
+    /// capture thread keeps mutating the live history arrays.
+    private static func computeRenderCorrelation(
+        rawCaptureFrame: [Float],
+        renderHistory: [Float]
+    ) -> (correlation: Float, lagMs: Int) {
 
         let capture24k =
             downsampleCaptureTo24k(
@@ -394,27 +472,23 @@ final class WebRTCAudioProcessor: AudioPreprocessor {
             )
 
         guard !capture24k.isEmpty else {
-            latestRenderCorrelation = 0
-            latestCorrelationLagMs = 0
-            return
+            return (0, 0)
         }
 
         let windowSize =
             capture24k.count
 
-        guard renderWaveformHistory.count >=
+        guard renderHistory.count >=
                 windowSize
         else {
-            latestRenderCorrelation = 0
-            latestCorrelationLagMs = 0
-            return
+            return (0, 0)
         }
 
         // Search up to 250 ms into recent render history.
         let maximumLagSamples =
             min(
                 6_000,
-                renderWaveformHistory.count -
+                renderHistory.count -
                 windowSize
             )
 
@@ -431,7 +505,7 @@ final class WebRTCAudioProcessor: AudioPreprocessor {
         while lag <= maximumLagSamples {
 
             let end =
-                renderWaveformHistory.count -
+                renderHistory.count -
                 lag
 
             let start =
@@ -440,13 +514,13 @@ final class WebRTCAudioProcessor: AudioPreprocessor {
 
             guard start >= 0,
                   end <=
-                    renderWaveformHistory.count
+                    renderHistory.count
             else {
                 break
             }
 
             let renderWindow =
-                renderWaveformHistory[
+                renderHistory[
                     start..<end
                 ]
 
@@ -471,15 +545,14 @@ final class WebRTCAudioProcessor: AudioPreprocessor {
             lag += lagStep
         }
 
-        latestRenderCorrelation =
-            bestCorrelation
-
-        latestCorrelationLagMs =
+        let lagMs =
             Int(
                 Double(bestLagSamples)
                 / 24_000.0
                 * 1000.0
             )
+
+        return (bestCorrelation, lagMs)
     }
     
     private func renderEnvelopeLocked()
@@ -502,22 +575,6 @@ final class WebRTCAudioProcessor: AudioPreprocessor {
         )
     }
     
-    func currentBargeDiagnostics()
-        -> BargeDiagnostics
-    {
-        lock.lock()
-        defer { lock.unlock() }
-        
-        return BargeDiagnostics(
-            renderRMS: latestRenderRMS,
-            renderEnvelope: renderEnvelopeLocked(),
-            rawCaptureRMS: latestRawCaptureRMS,
-            processedCaptureRMS: latestProcessedCaptureRMS,
-            renderCorrelation: latestRenderCorrelation,
-            correlationLagMs: latestCorrelationLagMs,
-        )
-    }
-
     func reset() {
         lock.lock()
 
@@ -534,12 +591,21 @@ final class WebRTCAudioProcessor: AudioPreprocessor {
         rawCaptureHistory.removeAll(
             keepingCapacity: true
         )
+
+        // Pre-existing gap: this wasn't being cleared, so a prior
+        // speaking turn's render audio could still be searched
+        // against by the next turn's correlation lookup.
+        renderWaveformHistory.removeAll(
+            keepingCapacity: true
+        )
+
         latestRenderRMS = 0
-        latestRawCaptureRMS = 0
-        latestProcessedCaptureRMS = 0
         latestRenderCorrelation = 0
         latestCorrelationLagMs = 0
-//        diagnosticsFrameCounter = 0
+
+        correlationInFlight = false
+        framesSinceLastCorrelationUpdate = 0
+        resetGeneration += 1
         
         didLogRenderProcessing = false
 

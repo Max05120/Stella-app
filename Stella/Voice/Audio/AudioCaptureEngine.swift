@@ -32,6 +32,11 @@ final class AudioCaptureEngine: @unchecked Sendable {
     struct CaptureFrame: Sendable {
 
         /// Mono Float32 microphone samples after preprocessing.
+        ///
+        /// Equal to the concatenation of `subFrames.map(\.samples)`.
+        /// Consumers that don't need per-sub-frame AEC metrics
+        /// (recording, Whisper, turn detection) can keep using this
+        /// exactly as before.
         let samples: [Float]
 
         /// Sample rate of the captured input buffer.
@@ -42,6 +47,13 @@ final class AudioCaptureEngine: @unchecked Sendable {
 
         /// Host timestamp supplied by AVAudioEngine.
         let hostTime: UInt64
+
+        /// `samples` broken into its true ~10 ms AEC sub-frames,
+        /// each paired with the metrics computed from that exact
+        /// sub-frame. Consumers that need audio and acoustic context
+        /// to line up exactly (BargeInDetector) should iterate this
+        /// instead of re-deriving metrics separately.
+        let subFrames: [AECProcessedFrame]
     }
 
     // MARK: - Listener
@@ -314,19 +326,24 @@ final class AudioCaptureEngine: @unchecked Sendable {
             return
         }
 
-        let processedSamples = preprocessor.processCapture(
+        let subFrames = preprocessor.processCapture(
             monoSamples
         )
 
-        guard !processedSamples.isEmpty else {
+        guard !subFrames.isEmpty else {
             return
+        }
+
+        let processedSamples = subFrames.flatMap {
+            $0.samples
         }
 
         let frame = CaptureFrame(
             samples: processedSamples,
             sampleRate: buffer.format.sampleRate,
             sourceChannelCount: channelCount,
-            hostTime: time.hostTime
+            hostTime: time.hostTime,
+            subFrames: subFrames
         )
 
         notifyListeners(frame)

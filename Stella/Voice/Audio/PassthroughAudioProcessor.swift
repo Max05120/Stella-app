@@ -21,8 +21,30 @@ import Foundation
 
 final class PassthroughAudioProcessor: AudioPreprocessor {
 
-    func processCapture(_ samples: [Float]) -> [Float] {
-        samples
+    func processCapture(_ samples: [Float]) -> [AECProcessedFrame] {
+        guard !samples.isEmpty else {
+            return []
+        }
+
+        // No AEC runs on the passthrough path, so there is nothing
+        // meaningful to report for render/suppression/correlation.
+        // Metrics are zeroed rather than made optional so every
+        // consumer can rely on a single, non-optional shape.
+        let metrics = AECFrameMetrics(
+            rawRMS: 0,
+            processedRMS: 0,
+            renderRMS: 0,
+            renderEnvelope: 0,
+            correlation: 0,
+            correlationLagMs: 0
+        )
+
+        return [
+            AECProcessedFrame(
+                samples: samples,
+                metrics: metrics
+            )
+        ]
     }
 
     func processRender(_ samples: [Float]) {
