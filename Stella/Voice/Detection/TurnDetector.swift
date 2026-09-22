@@ -262,6 +262,42 @@ final class TurnDetector {
             sampleRate: sampleRate
         )
     }
+    
+    
+    /// Starts an utterance already confirmed by BargeInDetector.
+    /// Retained audio includes the entire confirming capture callback.
+    /// The caller must not feed that callback again.
+    func beginConfirmedInterruption(
+        samples: [Float],
+        sampleRate: Double
+    ) {
+        precondition(!samples.isEmpty && sampleRate > 0)
+
+        reset()
+
+        currentSampleRate = sampleRate
+        utteranceSamples = samples
+        state = .speaking
+
+        // BargeInDetector has already confirmed this utterance.
+        // Do not reject a short interruption via the ordinary
+        // minimum-duration check a second time.
+        speechDuration = configuration.minimumSpeechDuration
+        silenceDuration = 0
+
+        // Prime this detector's separate VAD using the normal
+        // approximately 100 ms capture-block cadence.
+        let blockSize = max(1, Int(sampleRate * 0.1))
+
+        for offset in stride(
+            from: 0,
+            to: samples.count,
+            by: blockSize
+        ) {
+            let end = min(offset + blockSize, samples.count)
+            _ = vad.process(samples: Array(samples[offset..<end]))
+        }
+    }
 
     // MARK: - Finish Utterance
 

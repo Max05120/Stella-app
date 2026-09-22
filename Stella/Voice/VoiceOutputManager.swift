@@ -13,6 +13,7 @@ final class VoiceOutputManager:
     var spectrum:
         AudioSpectrum = .zero
     var onPlaybackStarted: (() -> Void)?
+    private var speechGeneration = UUID()
 
     private let kokoro: KokoroTTSEngine
     
@@ -88,6 +89,9 @@ final class VoiceOutputManager:
             )
             return
         }
+        
+        speechGeneration = UUID()
+        let generation = speechGeneration
 
         isSpeaking = true
 
@@ -107,7 +111,9 @@ final class VoiceOutputManager:
             ) {
                 [weak self] in
 
-                guard let self else {
+                guard let self,
+                      self.speechGeneration == generation
+                else {
                     return
                 }
 
@@ -133,7 +139,9 @@ final class VoiceOutputManager:
                 onFinished: {
                     [weak self] in
 
-                    guard let self else {
+                    guard let self,
+                          self.speechGeneration == generation
+                    else {
                         return
                     }
 
@@ -160,7 +168,9 @@ final class VoiceOutputManager:
     // MARK: - Stop
 
     func stop() {
-
+        
+        speechGeneration = UUID()
+        
         kokoro.stop()
 
         avSpeech.stop()

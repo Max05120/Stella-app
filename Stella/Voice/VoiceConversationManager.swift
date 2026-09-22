@@ -46,6 +46,10 @@ final class VoiceConversationManager:
     private var bargeDiagnosticsCounter = 0
     private var bargeInArmTask: Task<Void, Never>?
     private var currentSpeechAllowsBargeIn = false
+    
+    private var interruptionSamples: [Float] = []
+    private var interruptionSampleRate: Double?
+    private let interruptionHistoryDuration: Double = 0.8
 //    private var bargeInPreRoll:
 //        [AudioCaptureEngine.CaptureFrame] = []
 //
@@ -103,6 +107,7 @@ final class VoiceConversationManager:
     //    private let bargeInBleedFactor: Float = 1.6
     private var didBargeIn = false
     //    private var isCapturingBargeIn = false
+    private var lastBargeVoteLogTime: TimeInterval = 0
     
     private let bargeInIntents: [String] = [
         "wait",
@@ -165,10 +170,12 @@ final class VoiceConversationManager:
 
         let processor = WebRTCAudioProcessor()
         self.webRTCProcessor = processor
+        
+        let scheduledProcessor = ScheduledWebRTCAudioProcessor(processor: processor)
 
         let captureEngine =
             AudioCaptureEngine(
-                preprocessor: processor
+                preprocessor: scheduledProcessor
             )
 
         self.audioCaptureEngine = captureEngine
@@ -178,7 +185,7 @@ final class VoiceConversationManager:
         self.output =
             VoiceOutputManager(
                 sharedEngine: captureEngine.playbackEngine,
-                audioPreprocessor: processor
+                audioPreprocessor: scheduledProcessor
             )
         
         self.output.onPlaybackStarted = {
@@ -389,6 +396,12 @@ final class VoiceConversationManager:
         transcript = ""
         responseText = ""
         
+        #if DEBUG
+        AECDiagnosticRecorder.shared.start(
+            label: "built-in mic + built-in speakers; observe-only"
+        )
+        #endif
+        
         do {
             try audioCaptureEngine.start()
             print(
@@ -403,6 +416,10 @@ final class VoiceConversationManager:
                 "[AUDIO] failed to start shared engine:",
                 error.localizedDescription
             )
+            
+            #if DEBUG
+            AECDiagnosticRecorder.shared.finish()
+            #endif
 
             return
         }
@@ -434,6 +451,10 @@ final class VoiceConversationManager:
         
         output.stop()
         
+        #if DEBUG
+        AECDiagnosticRecorder.shared.finish()
+        #endif
+        
         state = .idle
         
         print(
@@ -460,6 +481,10 @@ final class VoiceConversationManager:
         
         output.stop()
         
+        #if DEBUG
+        AECDiagnosticRecorder.shared.finish()
+        #endif
+        
         transcript = ""
         responseText = ""
         
@@ -472,6 +497,8 @@ final class VoiceConversationManager:
     }
     
     private func cancelCurrentWork() {
+        
+        clearInterruptionAudio()
         
         silenceTask?.cancel()
         silenceTask = nil
@@ -486,25 +513,26 @@ final class VoiceConversationManager:
     // MARK: - Listening
     
     private func startListening() {
-
+        
+        clearInterruptionAudio()
         guard backend.status == .ready else {
             state = .error(
                 "Stella's backend isn't ready."
             )
             return
         }
-
+        
         transcript = ""
 
         turnDetector.reset()
-
+        let listeningSessionID = conversationId
         if let audioListenerID {
             audioCaptureEngine.removeListener(
                 audioListenerID
             )
             self.audioListenerID = nil
         }
-
+        
         audioListenerID =
             audioCaptureEngine.addListener {
                 [weak self] frame in
@@ -513,8 +541,8 @@ final class VoiceConversationManager:
                     return
                 }
 
-                Task { @MainActor in
-
+                DispatchQueue.main.async {
+                    guard self.conversationId == listeningSessionID else { return }
                     switch self.state {
 
                     case .listening:
@@ -545,76 +573,38 @@ final class VoiceConversationManager:
 //                            }
 //                        }
 
-                   case .speaking:
-                            
-                            if !self.bargeInArmed {
+                    case .speaking:
+                        guard self.currentSpeechAllowsBargeIn,
+                              self.output.isSpeaking
+                        else {
+                            break
+                        }
 
-                                self.bargeInDetector.calibrate(
-                                    frame: frame
-                                )
+                        // Retain the entire callback before evaluating its sub-frames.
+                        self.retainInterruptionAudio(frame)
 
-                                break
+                        if !self.bargeInArmed {
+                            if self.bargeInArmTask != nil {
+                                self.bargeInDetector.calibrate(frame: frame)
                             }
+                            break
+                        }
 
-                            let decisions =
-                                self.bargeInDetector.process(
-                                    frame: frame
-                                )
+                        let decisions = self.bargeInDetector.process(
+                            frame: frame,
+                            observeOnly: false
+                        )
 
-                            for decision in decisions {
+                        if let confirmed = decisions.first(where: { $0.triggered }) {
+                            print(
+                                "[BARGE] confirmed — " +
+                                "speechFrames=" +
+                                "\(confirmed.evidence.speechGateFramesInWindow)/" +
+                                "\(confirmed.evidence.framesInWindow)"
+                            )
 
-                                self.bargeDiagnosticsCounter += 1
-
-                                // Log roughly every 100 ms. Every
-                                // field below was computed from the
-                                // SAME sub-frame — VAD, suppression,
-                                // and correlation are no longer
-                                // fetched separately at different
-                                // moments.
-                                if self.bargeDiagnosticsCounter >= 10 {
-
-                                    self.bargeDiagnosticsCounter = 0
-
-                                    let evidence = decision.evidence
-
-                                    print(
-                                        String(
-                                            format:
-                                                "[BARGE-EVIDENCE] vad=%@ rms=%.4f gate=%.4f suppression=%.3f corr=%.3f frame=%.2f window=%.2f/%.2f speechFrames=%ld/%ld",
-                                            evidence.isSpeechVAD ? "Y" : "N",
-                                            evidence.rms,
-                                            evidence.residualGate,
-                                            evidence.suppressionRatio,
-                                            evidence.correlation,
-                                            evidence.frameEvidence,
-                                            evidence.windowEvidence,
-                                            self.bargeInDetector.requiredWindowEvidence,
-                                            evidence.speechGateFramesInWindow,
-                                            evidence.framesInWindow
-                                        )
-                                    )
-                                }
-
-                                if decision.triggered {
-
-                                    print(
-                                        "[BARGE-VOTE] would have interrupted — " +
-                                        "window=\(decision.evidence.windowEvidence) " +
-                                        "speechFrames=\(decision.evidence.speechGateFramesInWindow)/\(decision.evidence.framesInWindow)"
-                                    )
-
-                                    // Still observe-only, on purpose:
-                                    // uncomment the line below once
-                                    // logged [BARGE-EVIDENCE] sessions
-                                    // across real interruptions,
-                                    // residual bursts, and
-                                    // environmental transients show
-                                    // this threshold is reliable.
-//                                  self.handleNaturalBargeIn()
-
-                                    break
-                                }
-                            }
+                            self.handleNaturalBargeIn()
+                        }
 
                     default:
                         break
@@ -661,6 +651,37 @@ final class VoiceConversationManager:
 
             handleCompletedUtterance(
                 utterance
+            )
+        }
+    }
+    
+    private func clearInterruptionAudio() {
+        interruptionSamples.removeAll(keepingCapacity: true)
+        interruptionSampleRate = nil
+    }
+
+    private func retainInterruptionAudio(
+        _ frame: AudioCaptureEngine.CaptureFrame
+    ) {
+        guard frame.sampleRate > 0, !frame.samples.isEmpty else {
+            return
+        }
+
+        if interruptionSampleRate != frame.sampleRate {
+            clearInterruptionAudio()
+            interruptionSampleRate = frame.sampleRate
+        }
+
+        interruptionSamples.append(contentsOf: frame.samples)
+
+        let capacity = max(
+            1,
+            Int(frame.sampleRate * interruptionHistoryDuration)
+        )
+
+        if interruptionSamples.count > capacity {
+            interruptionSamples.removeFirst(
+                interruptionSamples.count - capacity
             )
         }
     }
@@ -870,28 +891,30 @@ final class VoiceConversationManager:
     
     // MARK: - Playback Helper
     private func handlePlaybackStarted() {
-
         guard state == .speaking,
+              output.isSpeaking,
               currentSpeechAllowsBargeIn,
-              !bargeInArmed
+              !bargeInArmed,
+              bargeInArmTask == nil
         else {
             return
         }
 
-        bargeInArmTask?.cancel()
+        // Discard any baseline learned before actual render audio.
+        bargeInDetector.reset()
+        bargeDiagnosticsCounter = 0
 
-        bargeInArmTask = Task {
-            @MainActor [weak self] in
+        print("[BARGE] playback calibration started")
 
-            guard let self else {
+        bargeInArmTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: .milliseconds(350))
+            } catch {
                 return
             }
 
-            try? await Task.sleep(
-                for: .milliseconds(350)
-            )
-
-            guard !Task.isCancelled,
+            guard let self,
+                  !Task.isCancelled,
                   self.state == .speaking,
                   self.output.isSpeaking,
                   self.currentSpeechAllowsBargeIn
@@ -900,6 +923,7 @@ final class VoiceConversationManager:
             }
 
             self.bargeInArmed = true
+            self.bargeInArmTask = nil
 
             print(
                 "[BARGE] detector armed — thermal=" +
@@ -1190,7 +1214,8 @@ final class VoiceConversationManager:
         allowBargeIn: Bool = false,
         then: @escaping () -> Void
     ) {
-
+        
+        clearInterruptionAudio()
         state = settingState
 
         bargeInDetector.reset()
@@ -1275,34 +1300,43 @@ final class VoiceConversationManager:
     }
     
     private func handleNaturalBargeIn() {
-
         guard state == .speaking,
               bargeInArmed,
-              currentSpeechAllowsBargeIn
+              currentSpeechAllowsBargeIn,
+              let rate = interruptionSampleRate,
+              !interruptionSamples.isEmpty
         else {
             return
         }
 
+        let retained = interruptionSamples
+        clearInterruptionAudio()
+
+        // Invalidate speaking state before stopping playback.
+        didBargeIn = true
         bargeInArmed = false
         currentSpeechAllowsBargeIn = false
 
         bargeInArmTask?.cancel()
         bargeInArmTask = nil
 
-        print("[BARGE] user speech detected")
-
-        didBargeIn = true
-
-        output.stop()
-
-        bargeInDetector.reset()
-        turnDetector.reset()
-
         state = .listening
 
-        print(
-            "[BARGE] Stella interrupted — listening"
+        // Stops playback/synthesis, not AudioCaptureEngine.
+        output.stop()
+
+        turnDetector.beginConfirmedInterruption(
+            samples: retained,
+            sampleRate: rate
         )
+
+        bargeInDetector.reset()
+
+        print(String(
+            format:
+                "[BARGE] TTS stopped; retained %.0f ms — listening",
+            Double(retained.count) / rate * 1000
+        ))
     }
     
 //    private func appendBargeInPreRoll(

@@ -36,6 +36,7 @@ final class KokoroTTSEngine {
     var onPlaybackStarted: (() -> Void)?
 
     private var hasNotifiedPlaybackStarted = false
+    private var playbackGeneration = UUID()
 
     private let voice = "af_heart"
     private let sampleRate = 24_000
@@ -128,7 +129,7 @@ final class KokoroTTSEngine {
         }
 
         stop()
-
+        let generation = playbackGeneration
         self.onFinished = onFinished
         isSpeaking = true
         
@@ -157,7 +158,9 @@ final class KokoroTTSEngine {
             for (index, chunk)
                 in chunks.enumerated()
             {
-                guard !Task.isCancelled else {
+                guard !Task.isCancelled,
+                      self.playbackGeneration == generation
+                else {
                     return
                 }
 
@@ -186,7 +189,9 @@ final class KokoroTTSEngine {
                         )
                     )
 
-                    guard !Task.isCancelled else {
+                    guard !Task.isCancelled,
+                          self.playbackGeneration == generation
+                    else {
                         return
                     }
 
@@ -197,15 +202,25 @@ final class KokoroTTSEngine {
                     )
 
                 } catch {
+                    guard !Task.isCancelled,
+                          self.playbackGeneration == generation
+                    else {
+                        return
+                    }
                     print(
                         "[TTS] Kokoro synthesis error:",
                         error.localizedDescription
                     )
-
                     self.finish()
                     return
                 }
             }
+            guard !Task.isCancelled,
+                  self.playbackGeneration == generation
+            else {
+                return
+            }
+            
             self.synthesisFinished = true
             self.finishIfPlaybackComplete()
         }
@@ -270,7 +285,9 @@ final class KokoroTTSEngine {
                 count: samples.count
             )
         }
-
+        
+        let generation = playbackGeneration
+        
         pendingBuffers += 1
 
         playerNode.scheduleBuffer(
@@ -284,7 +301,10 @@ final class KokoroTTSEngine {
             Task {
                 @MainActor in
 
-                guard let self else {
+                guard let self,
+                      self.playbackGeneration == generation,
+                      self.isSpeaking
+                else {
                     return
                 }
 
@@ -342,7 +362,7 @@ final class KokoroTTSEngine {
         ) {
             [weak self]
             buffer,
-            _ in
+            time in
 
             guard
                 buffer.frameLength > 0,
@@ -363,28 +383,46 @@ final class KokoroTTSEngine {
                     )
                 )
             
-            self?.audioPreprocessor?
-                .processRender(samples)
+            #if DEBUG
+            AECDiagnosticRecorder.shared.render(
+                samples: samples,
+                sampleRate: buffer.format.sampleRate,
+                time: time
+            )
+            #endif
             
-            Task { @MainActor [weak self] in
-
-                guard let self else {
-                    return
-                }
-
-                guard self.isSpeaking,
-                      !self.hasNotifiedPlaybackStarted
-                else {
-                    return
-                }
-
-                self.hasNotifiedPlaybackStarted = true
-
-                print(
-                    "[TTS] actual playback started"
+            if let scheduled = self?.audioPreprocessor as? TimestampedAudioPreprocessor {
+                scheduled.submitRender(
+                    samples,
+                    sampleRate: buffer.format.sampleRate,
+                    hostTime: time.isHostTimeValid ? time.hostTime : 0
                 )
+            } else {
+                self?.audioPreprocessor?.processRender(samples)
+            }
+            
+            // A nonempty tap buffer can still contain silence.
+            // This checks outgoing render audio, not microphone speech.
+            let containsRenderAudio = samples.contains {
+                $0.isFinite && abs($0) > 0.00001
+            }
 
-                self.onPlaybackStarted?()
+            if containsRenderAudio {
+                Task { @MainActor [weak self] in
+                    guard let self,
+                          self.isSpeaking,
+                          self.pendingBuffers > 0,
+                          self.playerNode.isPlaying,
+                          !self.hasNotifiedPlaybackStarted
+                    else {
+                        return
+                    }
+
+                    self.hasNotifiedPlaybackStarted = true
+
+                    print("[TTS] actual playback started")
+                    self.onPlaybackStarted?()
+                }
             }
 
             analyzer?.analyze(
@@ -457,7 +495,8 @@ final class KokoroTTSEngine {
     // MARK: - Stop
 
     func stop() {
-
+        
+        playbackGeneration = UUID()
         synthesisTask?.cancel()
         synthesisTask = nil
 

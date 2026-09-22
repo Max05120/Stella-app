@@ -1,36 +1,17 @@
 import Foundation
 
-/// Barge-in classifier.
+/// Experimental barge-in candidate detector.
 ///
-/// This deliberately does NOT try to find one threshold that
-/// separates Stella's own AEC residual from genuine near-end speech.
-/// This project's own debugging notes — and the wider double-talk-
-/// detection literature (Geigel, coherence/NCC methods) — both show
-/// that no single acoustic statistic is reliable alone: energy
-/// thresholds, suppression ratios, and correlation all independently
-/// flip on real speech and on residual in different sessions.
+/// Requires sustained accepted clean-capture audio over a
+/// 200 ms window. The current VoiceActivityDetector uses adaptive
+/// energy and hysteresis; it does not establish speaker identity
+/// or independently distinguish speech from residual echo.
 ///
-/// Instead, each true ~10 ms AEC sub-frame contributes a continuous,
-/// weighted "evidence" score built from several synchronized
-/// signals, and evidence is accumulated over a short rolling window
-/// before a barge-in is confirmed. The VAD speech gate is the base
-/// signal; suppression and correlation only ever ADD corroborating
-/// weight on top of a frame the gate already accepted — neither can
-/// manufacture evidence on its own, and neither can disqualify a
-/// frame the gate accepts, because both have been observed to score
-/// "wrong" on genuine speech in this project's own logs.
+/// Suppression and render correlation are logged for diagnosis,
+/// but do not contribute to confirmation.
 ///
-/// IMPORTANT — read before changing thresholds:
-/// The weights and thresholds below are starting values based on the
-/// example RMS/suppression/correlation numbers in this project's
-/// design notes. They are NOT tuned against real sessions, because
-/// tuning blind (without audio) reproduces exactly the mistake this
-/// design is meant to avoid. Run this in observe-only mode (see the
-/// `[BARGE-EVIDENCE]` logging at the call site), collect real
-/// sessions covering genuine interruptions, residual bursts, and
-/// environmental transients, and adjust `requiredWindowEvidence`,
-/// `minimumSpeechGateFrames`, and the two corroboration weights
-/// against that data before ever calling `handleNaturalBargeIn()`.
+/// Keep observe-only enabled pending acoustic validation.
+
 final class BargeInDetector {
 
     // MARK: - Result
@@ -62,14 +43,14 @@ final class BargeInDetector {
 
     /// Sub-frames of rolling evidence to accumulate before deciding.
     /// At ~10 ms/frame this is a 100 ms decision window.
-    private let evidenceWindowSize = 10
+    private let evidenceWindowSize = 20
 
     /// Summed evidence across the window required to confirm a
     /// barge-in. Each frame can contribute at most ~2.0 (1.0 from
     /// the VAD gate, up to 0.6 from suppression, up to 0.4 from
     /// correlation), so this requires sustained, corroborated
     /// evidence rather than one strong frame.
-    let requiredWindowEvidence: Float = 9.0
+    let requiredWindowEvidence: Float = 16.0
 
     /// Regardless of accumulated evidence, at least this many
     /// sub-frames in the window must have passed the raw VAD speech
@@ -78,7 +59,7 @@ final class BargeInDetector {
     /// momentarily score well on suppression/correlation without any
     /// sustained speech-like energy pattern — exactly the failure
     /// mode observed in this project's own logs.
-    private let minimumSpeechGateFrames = 5
+    private let minimumSpeechGateFrames = 16
 
     /// Multiplier applied to the learned playback-residual floor to
     /// get the VAD's speech threshold while Stella is talking.
@@ -89,13 +70,13 @@ final class BargeInDetector {
     /// double-talk has been observed surviving AEC as poorly as
     /// ~0.15 suppression, so a LOW suppression ratio must never be
     /// treated as disqualifying, only as slightly less corroborating.
-    private let suppressionWeight: Float = 0.6
+//    private let suppressionWeight: Float = 0.6
 
     /// Weight given to "this frame's raw capture looks unlike
     /// Stella's own recent render" (low correlation). Same caveat as
     /// above — correlation has also been observed to flip on real
     /// speech, so this only nudges the score, never gates it.
-    private let correlationWeight: Float = 0.4
+//    private let correlationWeight: Float = 0.4
 
     // MARK: - State
 
@@ -158,24 +139,23 @@ final class BargeInDetector {
     /// this call stops at the first confirmed trigger; once
     /// triggered, this returns an empty array until `reset()`.
     func process(
-        frame: AudioCaptureEngine.CaptureFrame
+        frame: AudioCaptureEngine.CaptureFrame,
+        observeOnly: Bool = false
     ) -> [Decision] {
 
-        guard !triggered else {
+        if triggered && !observeOnly {
             return []
         }
 
         var decisions: [Decision] = []
 
         for subFrame in frame.subFrames {
-
-            let decision = process(
-                subFrame: subFrame
-            )
-
+            let decision = process(subFrame: subFrame)
             decisions.append(decision)
 
-            if decision.triggered {
+            // Live mode latches at the first accepted interruption.
+            // Observe-only mode evaluates every subsequent sub-frame.
+            if decision.triggered && !observeOnly {
                 triggered = true
                 break
             }
@@ -211,24 +191,10 @@ final class BargeInDetector {
         // weight on top of a frame that already looks speech-like.
         // ------------------------------------------------
 
-        var frameEvidence: Float = 0
-
-        if passesSpeechGate {
-
-            frameEvidence += 1.0
-
-            let suppression = min(
-                max(subFrame.metrics.suppressionRatio, 0),
-                1
-            )
-            frameEvidence += suppression * suppressionWeight
-
-            let dissimilarity = 1 - min(
-                max(subFrame.metrics.correlation, 0),
-                1
-            )
-            frameEvidence += dissimilarity * correlationWeight
-        }
+        // Count accepted audio duration.
+        // Suppression and asynchronous correlation remain diagnostics;
+        // neither contributes an unvalidated confidence bonus.
+        let frameEvidence: Float = passesSpeechGate ? 1.0 : 0.0
 
         evidenceWindow.append(frameEvidence)
         speechGateWindow.append(passesSpeechGate)
@@ -280,6 +246,7 @@ final class BargeInDetector {
         }
 
         let confirmed =
+            passesSpeechGate &&
             windowEvidence >= requiredWindowEvidence &&
             speechGateFrames >= minimumSpeechGateFrames
 

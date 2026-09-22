@@ -259,6 +259,8 @@ final class AudioCaptureEngine: @unchecked Sendable {
 
         removeExistingOwnedTapIfNeeded()
 
+        (preprocessor as? TimestampedAudioPreprocessor)?.startSession()
+
         inputNode.installTap(
             onBus: 0,
             bufferSize: 1024,
@@ -288,6 +290,7 @@ final class AudioCaptureEngine: @unchecked Sendable {
             stateLock.lock()
             tapInstalled = false
             stateLock.unlock()
+            preprocessor.reset()
 
             throw error
         }
@@ -299,54 +302,68 @@ final class AudioCaptureEngine: @unchecked Sendable {
         _ buffer: AVAudioPCMBuffer,
         time: AVAudioTime
     ) {
-
-        guard buffer.frameLength > 0 else {
-            return
-        }
-
-        guard let channelData = buffer.floatChannelData else {
-            return
-        }
+        guard buffer.frameLength > 0,
+              let channelData = buffer.floatChannelData else { return }
 
         let frameCount = Int(buffer.frameLength)
         let channelCount = Int(buffer.format.channelCount)
-
-        guard frameCount > 0,
-              channelCount > 0 else {
-            return
-        }
+        guard channelCount > 0 else { return }
 
         let monoSamples = makeMonoSamples(
             channelData: channelData,
             frameCount: frameCount,
             channelCount: channelCount
         )
+        guard !monoSamples.isEmpty else { return }
 
-        guard !monoSamples.isEmpty else {
-            return
+        let rate = buffer.format.sampleRate
+        let stamp = time.isHostTimeValid ? time.hostTime : 0
+        let sampleStamp: Int64? = time.isSampleTimeValid ? time.sampleTime : nil
+
+        let deliver: @Sendable ([AECProcessedFrame]) -> Void = { [weak self] frames in
+            let processed = frames.flatMap { $0.samples }
+
+            #if DEBUG
+            // This is the ORIGINAL tap timestamp, not the worker completion time.
+            let diagnosticTime: AVAudioTime
+            if let sampleStamp, stamp != 0 {
+                diagnosticTime = AVAudioTime(
+                    hostTime: stamp, sampleTime: sampleStamp, atRate: rate
+                )
+            } else if stamp != 0 {
+                diagnosticTime = AVAudioTime(hostTime: stamp)
+            } else {
+                diagnosticTime = AVAudioTime(sampleTime: sampleStamp ?? 0, atRate: rate)
+            }
+            AECDiagnosticRecorder.shared.capture(
+                raw: monoSamples, clean: processed,
+                sampleRate: rate, time: diagnosticTime
+            )
+            #endif
+
+            guard let self, !frames.isEmpty else { return }
+            self.stateLock.lock()
+            let keepDelivering = self.shouldBeRunning
+            self.stateLock.unlock()
+            guard keepDelivering else { return }
+
+            self.notifyListeners(CaptureFrame(
+                samples: processed,
+                sampleRate: rate,
+                sourceChannelCount: channelCount,
+                hostTime: stamp,
+                subFrames: frames
+            ))
         }
 
-        let subFrames = preprocessor.processCapture(
-            monoSamples
-        )
-
-        guard !subFrames.isEmpty else {
-            return
+        if let scheduled = preprocessor as? TimestampedAudioPreprocessor {
+            scheduled.submitCapture(
+                monoSamples, sampleRate: rate, hostTime: stamp,
+                completion: deliver
+            )
+        } else {
+            deliver(preprocessor.processCapture(monoSamples))
         }
-
-        let processedSamples = subFrames.flatMap {
-            $0.samples
-        }
-
-        let frame = CaptureFrame(
-            samples: processedSamples,
-            sampleRate: buffer.format.sampleRate,
-            sourceChannelCount: channelCount,
-            hostTime: time.hostTime,
-            subFrames: subFrames
-        )
-
-        notifyListeners(frame)
     }
 
     // MARK: - Mono Conversion
