@@ -59,6 +59,16 @@ actor WhisperTranscriber {
         }
         
     }
+    func shutdown() {
+        guard let context else { return }
+
+        // Clear ownership so deinit cannot free this twice.
+        self.context = nil
+
+        whisper_free(context)
+
+        print("[WHISPER] native context released")
+    }
     // MARK: - Completed Utterance
 
     /// New Stella voice pipeline entry point.
@@ -72,7 +82,8 @@ actor WhisperTranscriber {
     func transcribe(
         utterance: TurnDetector.Utterance
     ) throws -> String {
-
+        
+        try Task.checkCancellation()
         let whisperSamples =
             try WhisperAudioResampler.resample(
                 samples: utterance.samples,
@@ -96,6 +107,7 @@ actor WhisperTranscriber {
     
     func transcribe(samples: [Float]) throws -> String {
         
+        try Task.checkCancellation()
         guard let context else {
             throw WhisperError.contextCreationFailed
         }

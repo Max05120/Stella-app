@@ -25,6 +25,8 @@ final class AppDelegate:
 
     private var quickAsk:
         QuickAskPanelController!
+    private var terminationTask: Task<Void, Never>?
+    private var terminationFinished = false
 
 
     // MARK: - App lifecycle
@@ -45,13 +47,39 @@ final class AppDelegate:
         stellaDesktop.show()
     }
 
+    func applicationShouldTerminate(
+        _ sender: NSApplication
+    ) -> NSApplication.TerminateReply {
+        if terminationFinished {
+            return .terminateNow
+        }
 
+        guard terminationTask == nil else {
+            return .terminateLater
+        }
+
+        terminationTask = Task { @MainActor in
+            print("[APP] waiting for voice cleanup")
+
+            await self.voiceManager.shutdownForApplicationExit()
+
+            self.backend.stop()
+
+            self.terminationFinished = true
+            self.terminationTask = nil
+
+            print("[APP] cleanup finished — exiting")
+
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+
+        return .terminateLater
+    }
+    
+    
     func applicationWillTerminate(
         _ notification: Notification
     ) {
-
-        voiceManager.shutdownAudio()
-
         backend.stop()
     }
 }
@@ -69,16 +97,9 @@ struct StellaApp: App {
 
         Window("Stella", id: "chat") {
             ContentView()
-//            WhisperTestView()
                 .environmentObject(appDelegate.backend)
         }
         .defaultLaunchBehavior(.suppressed)
-        Window(
-            "Voice Test",
-            id: "voice-test"
-        ) {
-            WhisperTestView()
-        }
         Settings {
             SettingsView()
                 .environmentObject(appDelegate.backend)
@@ -98,9 +119,6 @@ struct MenuBarView: View {
             Divider()
             Button("Open Stella") { openWindow(id: "chat") }
                 .keyboardShortcut("o", modifiers: .command)
-            Button("Voice Test") {
-                            openWindow(id: "voice-test")
-                        }
             Button("Settings...") { openSettings() }
                 .keyboardShortcut(",", modifiers: .command)
             Divider()

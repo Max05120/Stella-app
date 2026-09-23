@@ -172,22 +172,7 @@ struct StellaDesktopView: View {
             }
             .task {
                 configureVoiceLifecycle()
-
-                async let allowed = wakeWordListener.requestPermissions()
-                await voiceManager.waitUntilAudioGraphReady()
-
-                guard await allowed else {
-                    print(
-                        "[CHARACTER] wake-word permissions unavailable"
-                    )
-                    return
-                }
-
-                guard voiceManager.state == .idle else {
-                    return
-                }
-
-                wakeWordListener.start()
+                await voiceManager.startWakeStandby()
             }
             
             .onChange(
@@ -232,35 +217,9 @@ struct StellaDesktopView: View {
 
         // Active Stella -> wake standby
         voiceManager.onVoiceSessionEnded = {
-
-            print(
-                "[CHARACTER] conversation ended"
-            )
-
+            print("[CHARACTER] conversation ended")
             lastInteractionTime = Date()
-
             behaviorState = .idle
-
-            Task { @MainActor in
-
-                // Brief cooldown after goodbye playback.
-                // The shared capture engine remains running.
-                try? await Task.sleep(
-                    for: .milliseconds(300)
-                )
-
-                guard
-                    voiceManager.state == .idle
-                else {
-                    return
-                }
-
-                print(
-                    "[CHARACTER] returning to wake standby"
-                )
-
-                wakeWordListener.start()
-            }
         }
     }
     
