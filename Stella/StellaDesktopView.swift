@@ -23,7 +23,7 @@ struct StellaDesktopView: View {
             self.mouseTracker = mouseTracker
             self.voiceManager = voiceManager
             _wakeWordListener = StateObject(
-                wrappedValue: WakeWordListener(recorder: voiceManager.recorder)
+                wrappedValue: voiceManager.wakeWordListener
             )
         }
     @State private var behaviorState: StellaBehaviorState = .idle
@@ -225,21 +225,8 @@ struct StellaDesktopView: View {
 
             triggerVoiceWake()
 
-            Task { @MainActor in
-
-                // Give WakeWordListener time to fully release
-                // AVAudioEngine before Whisper grabs the mic.
-                try? await Task.sleep(
-                    for: .milliseconds(300)
-                )
-
-                print(
-                    "[CHARACTER] starting voice conversation"
-                )
-
-                voiceManager
-                    .beginConversation()
-            }
+            print("[CHARACTER] starting voice conversation")
+            voiceManager.beginConversation()
         }
 
 
@@ -256,8 +243,8 @@ struct StellaDesktopView: View {
 
             Task { @MainActor in
 
-                // Give MicrophoneRecorder time to release
-                // the microphone before wake detection resumes.
+                // Brief cooldown after goodbye playback.
+                // The shared capture engine remains running.
                 try? await Task.sleep(
                     for: .milliseconds(300)
                 )

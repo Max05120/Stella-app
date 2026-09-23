@@ -62,7 +62,10 @@ final class VoiceConversationManager:
     
     // TEMPORARY: legacy recorder used only by WakeWordListener.
     // Conversation audio uses AudioCaptureEngine.
-    let recorder = MicrophoneRecorder()
+//    let recorder = MicrophoneRecorder()
+    lazy var wakeWordListener = WakeWordListener(
+        captureEngine: audioCaptureEngine
+    )
     private let output: VoiceOutputManager
     
     private let backend:
@@ -385,7 +388,7 @@ final class VoiceConversationManager:
         guard whisper != nil else {
             return
         }
-        
+        wakeWordListener.stop()
         cancelCurrentWork()
         didBargeIn = false
         //        isCapturingBargeIn = false
@@ -398,15 +401,13 @@ final class VoiceConversationManager:
         
         #if DEBUG
         AECDiagnosticRecorder.shared.start(
-            label: "built-in mic + built-in speakers; observe-only"
+            label: "shared WebRTC capture; live barge-in"
         )
         #endif
         
         do {
             try audioCaptureEngine.start()
-            print(
-                "[AUDIO] shared conversation engine started"
-            )
+            print("[AUDIO] shared capture active for conversation")
         } catch {
             state = .error(
                 error.localizedDescription
@@ -447,7 +448,7 @@ final class VoiceConversationManager:
             self.audioListenerID = nil
         }
 
-        audioCaptureEngine.stop()
+//        audioCaptureEngine.stop()
         
         output.stop()
         
@@ -477,7 +478,7 @@ final class VoiceConversationManager:
             self.audioListenerID = nil
         }
 
-        audioCaptureEngine.stop()
+//        audioCaptureEngine.stop()
         
         output.stop()
         
@@ -494,6 +495,17 @@ final class VoiceConversationManager:
             "[VOICE] voice session ended — Stella idle"
         )
         onVoiceSessionEnded?()
+    }
+    
+    func shutdownAudio() {
+        // Prevent recovery from restarting wake recognition.
+        wakeWordListener.stop()
+
+        // Stop conversation work and playback first.
+        stopConversation()
+
+        // Only application shutdown stops the shared capture graph.
+        audioCaptureEngine.stop()
     }
     
     private func cancelCurrentWork() {

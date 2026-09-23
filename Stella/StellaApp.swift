@@ -50,8 +50,7 @@ final class AppDelegate:
         _ notification: Notification
     ) {
 
-        voiceManager
-            .stopConversation()
+        voiceManager.shutdownAudio()
 
         backend.stop()
     }

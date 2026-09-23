@@ -69,12 +69,12 @@ final class StellaDesktopController {
         
         mouseTracker.start()
         
-        panel.contentView = NSHostingView(
-            rootView: StellaDesktopView(
-                mouseTracker: mouseTracker,
-                voiceManager: voiceManager
-            )
-        )
+//        panel.contentView = NSHostingView(
+//            rootView: StellaDesktopView(
+//                mouseTracker: mouseTracker,
+//                voiceManager: voiceManager
+//            )
+//        )
 
         panel.orderFrontRegardless()
 
